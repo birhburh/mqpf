@@ -1,0 +1,13 @@
+assets_src/*.tgs
+assets_src/*.gif
+assets_src/*.png
+assets_src/*.json
+.DS_Store
+assets/*.gif
+
+# Added by cargo
+
+/target
+
+# ignore all lottie examples that I downloaded from lottie-rs without proper credit
+/*.json
