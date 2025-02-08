@@ -14,3 +14,6 @@ half = "1.5"
 pathfinder_geometry = "0.5.1"
 pathfinder_simd = "0.5.4"
 image = { version = "0.23", default-features = false, features = ["png"] }
+
+[patch.crates-io]
+miniquad = { version = "0.4.7", git = "https://github.com/not-fl3/miniquad", rev = "ec99dab891d21bc664957afdc3e743942b7c4926" }
