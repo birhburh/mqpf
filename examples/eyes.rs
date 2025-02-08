@@ -35,8 +35,6 @@ fn draw_eyes(
     mouse_position: Vector2F,
     time: f64,
 ) {
-    // let time: f64 = 0.0;
-    // let mouse_position = Vector2F::new(0.0, 0.0);
     let eyes_rect = RectF::new(
         vec2f(
             framebuffer_size.0 as f32 / hidpi_factor as f32 / 2.
@@ -49,11 +47,10 @@ fn draw_eyes(
             ((framebuffer_size.1 * 0.9) / 2.0) as f32,
         ),
     );
-    let eyes_radii = eyes_rect.size() * vec2f(0.23, 0.35);
+    let eyes_radii = eyes_rect.size() * vec2f(0.23, 0.5);
     let eyes_left_position = eyes_rect.origin() + eyes_radii;
-    let eyes_right_position =
-        eyes_rect.origin() + vec2f(eyes_rect.width() - eyes_radii.x(), eyes_radii.y());
-    let eyes_center = f32::min(eyes_radii.x(), eyes_radii.y()) * 0.4;
+    let eyes_right_position = eyes_rect.origin() + vec2f(eyes_rect.width() - eyes_radii.x(), eyes_radii.y());
+    let eyes_center = f32::min(eyes_radii.x(), eyes_radii.y()) * 0.5;
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
     let mut path = Path2D::new();
@@ -83,118 +80,6 @@ fn draw_eyes(
         PI_2,
     );
     push_path(scene, transform, path, &color_u8!(32, 32, 32, 255));
-
-    let mut path = Path2D::new();
-    path.ellipse(
-        eyes_left_position
-            + delta
-            + vec2f(
-                eyes_center * 0.5,
-                eyes_radii.y() * 0.25 * (1.0 - blink) + eyes_center * 0.75 * (blink - 0.5),
-            ),
-        vec2f(eyes_center * 0.2, eyes_center * 0.25),
-        0.0,
-        0.0,
-        PI_2,
-    );
-    path.ellipse(
-        eyes_right_position
-            + delta
-            + vec2f(
-                eyes_center * 0.5,
-                eyes_radii.y() * 0.25 * (1.0 - blink) + eyes_center * 0.75 * (blink - 0.5),
-            ),
-        vec2f(eyes_center * 0.2, eyes_center * 0.25),
-        0.0,
-        0.0,
-        PI_2,
-    );
-    push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
-
-    let mut path = Path2D::new();
-    let tooth_pos = vec2f(
-        framebuffer_size.0 / hidpi_factor as f32,
-        framebuffer_size.1 / hidpi_factor as f32,
-    ) * vec2f(0.45, 0.83);
-    path.move_to(tooth_pos);
-    path.line_to(tooth_pos * vec2f(1.0, 1.1));
-    path.bezier_curve_to(
-        tooth_pos * vec2f(1.0, 1.15),
-        tooth_pos * vec2f(1.1, 1.15),
-        tooth_pos * vec2f(1.1, 1.1),
-    );
-    path.line_to(tooth_pos * vec2f(1.1, 1.0));
-    path.close_path();
-    push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
-
-    let mut path = Path2D::new();
-    let tooth_pos = vec2f(
-        framebuffer_size.0 / hidpi_factor as f32,
-        framebuffer_size.1 / hidpi_factor as f32,
-    ) * vec2f(0.5, 0.83);
-    path.move_to(tooth_pos);
-    path.line_to(tooth_pos * vec2f(1.0, 1.1));
-    path.bezier_curve_to(
-        tooth_pos * vec2f(1.0, 1.15),
-        tooth_pos * vec2f(1.1, 1.15),
-        tooth_pos * vec2f(1.1, 1.1),
-    );
-    path.line_to(tooth_pos * vec2f(1.1, 1.0));
-    path.close_path();
-    push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
-
-    let mut path = Path2D::new();
-    let mouth_pos = vec2f(
-        framebuffer_size.0 / hidpi_factor as f32,
-        framebuffer_size.1 / hidpi_factor as f32,
-    ) * vec2f(0.68, 0.75);
-    path.move_to(mouth_pos);
-    path.bezier_curve_to(
-        mouth_pos * vec2f(0.85, 0.85),
-        mouth_pos * vec2f(0.65, 0.85),
-        mouth_pos * vec2f(0.5, 1.0),
-    );
-    path.bezier_curve_to(
-        mouth_pos * vec2f(0.43, 1.08),
-        mouth_pos * vec2f(0.43, 1.16),
-        mouth_pos * vec2f(0.5, 1.2),
-    );
-    path.bezier_curve_to(
-        mouth_pos * vec2f(0.5, 1.21),
-        mouth_pos * vec2f(0.6, 1.21),
-        mouth_pos * vec2f(0.65, 1.15),
-    );
-    path.bezier_curve_to(
-        mouth_pos * vec2f(0.65, 1.15),
-        mouth_pos * vec2f(0.75, 1.07),
-        mouth_pos * vec2f(0.85, 1.15),
-    );
-    path.bezier_curve_to(
-        mouth_pos * vec2f(0.9, 1.17),
-        mouth_pos * vec2f(0.95, 1.2),
-        mouth_pos * vec2f(1.0, 1.2),
-    );
-    path.bezier_curve_to(
-        mouth_pos * vec2f(1.09, 1.15),
-        mouth_pos * vec2f(1.05, 1.05),
-        mouth_pos * vec2f(1.0, 1.0),
-    );
-    path.close_path();
-    push_path(scene, transform, path, &color_u8!(246, 210, 165, 255));
-
-    let mut path = Path2D::new();
-    let nose_pos = vec2f(
-        framebuffer_size.0 / hidpi_factor as f32,
-        framebuffer_size.1 / hidpi_factor as f32,
-    ) * vec2f(0.5, 0.7);
-    path.ellipse(
-        nose_pos,
-        vec2f(eyes_center, eyes_center * 0.7),
-        0.0,
-        0.0,
-        PI_2,
-    );
-    push_path(scene, transform, path, &color_u8!(32, 32, 32, 255));
 }
 
 #[macroquad::main(window_conf)]
@@ -203,7 +88,7 @@ async fn main() {
     let hidpi_factor = dpi_scale();
 
     let context = unsafe { get_internal_gl().quad_context };
-    let mut renderer = Renderer::new(context, framebuffer_size, color_u8!(116, 200, 214, 255));
+    let mut renderer = Renderer::new(context, framebuffer_size, color_u8!(77, 77, 82, 255));
 
     let mut saved_width = 0.0;
     let mut saved_height = 0.0;

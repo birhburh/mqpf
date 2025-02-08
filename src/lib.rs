@@ -1230,7 +1230,7 @@ pub struct Renderer<'a> {
 
 impl<'a> Renderer<'a> {
     /// Creates a new renderer ready to render content
-    pub fn new(ctx: &'a mut dyn RenderingBackend, framebuffer_size: (f32, f32)) -> Renderer<'a> {
+    pub fn new(ctx: &'a mut dyn RenderingBackend, framebuffer_size: (f32, f32), background_color: Color) -> Renderer<'a> {
         let viewport = RectI::new(
             Vector2I::default(),
             Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
@@ -1406,7 +1406,7 @@ impl<'a> Renderer<'a> {
 
             viewport,
 
-            background_color: color_u8!(116, 200, 214, 255),
+            background_color,
 
             tiles_vertex_indices_buffer: None,
             tiles_vertex_indices_length: 0,
