@@ -1,6 +1,6 @@
 [package]
 name = "mqpf"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Path renderer for macroquad based on pathfinder code"
 license = "MIT"
