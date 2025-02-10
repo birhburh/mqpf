@@ -12,12 +12,10 @@ use {
     },
     pathfinder_geometry::{
         line_segment::LineSegment2F,
-        rect::{RectF, RectI},
-        transform2d::Transform2F,
-        transform3d::Transform4F,
+        rect::RectI,
         unit_vector::UnitVector,
         util::{alignup_i32, lerp},
-        vector::{vec2f, vec2i, IntoVector2F, Vector2F, Vector2I, Vector4F},
+        vector::{vec2f, vec2i, Vector2F, Vector2I},
     },
     pathfinder_simd::default::{F32x2, F32x4, U32x2},
     std::{
@@ -118,34 +116,28 @@ impl Path2D {
     #[inline]
     pub fn arc(
         &mut self,
-        // center: Vec2,
-        center: Vector2F,
+        center: Vec2,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
         direction: ArcDirection,
     ) {
-        // let transform = Affine2::from_scale_angle_translation(vec2(radius, radius), 0.0, center);
-        let transform = Transform2F::from_scale(radius).translate(center);
+        let transform = Affine2::from_scale_angle_translation(vec2(radius, radius), 0.0, center);
         self.current_contour
             .push_arc(&transform, start_angle, end_angle, direction);
     }
 
-    pub fn ellipse<A>(
+    pub fn ellipse(
         &mut self,
-        center: Vector2F,
-        axes: A,
+        center: Vec2,
+        axes: Vec2,
         rotation: f32,
         start_angle: f32,
         end_angle: f32,
-    ) where
-        A: IntoVector2F,
-    {
+    ) {
         self.flush_current_contour();
 
-        let transform = Transform2F::from_scale(axes)
-            .rotate(rotation)
-            .translate(center);
+        let transform = Affine2::from_scale_angle_translation(axes, rotation, center);
         self.current_contour
             .push_arc(&transform, start_angle, end_angle, ArcDirection::CW);
 
@@ -191,8 +183,8 @@ impl Outline {
         self.contours.push(contour);
     }
 
-    fn transform(&mut self, transform: &Transform2F) {
-        if transform.is_identity() {
+    fn transform(&mut self, transform: &Affine2) {
+        if transform == &Affine2::IDENTITY {
             return;
         }
 
@@ -265,7 +257,7 @@ impl Contour {
 
     fn push_arc(
         &mut self,
-        transform: &Transform2F,
+        transform: &Affine2,
         start_angle: f32,
         end_angle: f32,
         direction: ArcDirection,
@@ -281,14 +273,14 @@ impl Contour {
 
     fn push_arc_from_unit_chord(
         &mut self,
-        transform: &Transform2F,
+        transform: &Affine2,
         mut chord: LineSegment2F,
         direction: ArcDirection,
     ) {
-        let mut direction_transform = Transform2F::default();
+        let mut direction_transform = Affine2::default();
         if direction == ArcDirection::CCW {
             chord *= vec2f(1.0, -1.0);
-            direction_transform = Transform2F::from_scale(vec2f(1.0, -1.0));
+            direction_transform = Affine2::from_scale(vec2(1.0, -1.0));
         }
 
         let (mut vector, end_vector) = (UnitVector(chord.from()), UnitVector(chord.to()));
@@ -305,7 +297,10 @@ impl Contour {
             }
 
             let half_sweep_vector = sweep_vector.halve_angle();
-            let rotation = Transform2F::from_rotation_vector(half_sweep_vector.rotate_by(vector));
+
+            let rotated = half_sweep_vector.rotate_by(vector);
+            let rotation = Affine2::from_cols(vec2(rotated.0.x(), rotated.0.y()), vec2(-rotated.0.y(), rotated.0.x()), vec2(0.0, 0.0));
+            dbg!(rotation);
             segment = segment.transform(&(*transform * direction_transform * rotation));
 
             let mut push_segment_flags = PushSegmentFlags::UPDATE_BOUNDS;
@@ -324,24 +319,24 @@ impl Contour {
         const EPSILON: f32 = 0.001;
     }
 
-    fn push_ellipse(&mut self, transform: &Transform2F) {
+    fn push_ellipse(&mut self, transform: &Affine2) {
         let segment = Segment::quarter_circle_arc();
         let mut rotation;
         self.push_segment(
             &segment.transform(transform),
             PushSegmentFlags::UPDATE_BOUNDS | PushSegmentFlags::INCLUDE_FROM_POINT,
         );
-        rotation = Transform2F::from_rotation_vector(UnitVector(vec2f(0.0, 1.0)));
+        rotation = Affine2::from_cols(vec2(0.0, 1.0), vec2(-1.0, 0.0), vec2(0.0, 0.0));
         self.push_segment(
             &segment.transform(&(*transform * rotation)),
             PushSegmentFlags::UPDATE_BOUNDS,
         );
-        rotation = Transform2F::from_rotation_vector(UnitVector(vec2f(-1.0, 0.0)));
+        rotation = Affine2::from_cols(vec2(-1.0, 0.0), vec2(0.0, -1.0), vec2(0.0, 0.0));
         self.push_segment(
             &segment.transform(&(*transform * rotation)),
             PushSegmentFlags::UPDATE_BOUNDS,
         );
-        rotation = Transform2F::from_rotation_vector(UnitVector(vec2f(0.0, -1.0)));
+        rotation = Affine2::from_cols(vec2(0.0, -1.0), vec2(1.0, 0.0), vec2(0.0, 0.0));
         self.push_segment(
             &segment.transform(&(*transform * rotation)),
             PushSegmentFlags::UPDATE_BOUNDS,
@@ -406,13 +401,15 @@ impl Contour {
         self.push_point(to, PointFlags::empty(), true);
     }
 
-    fn transform(&mut self, transform: &Transform2F) {
-        if transform.is_identity() {
+    fn transform(&mut self, transform: &Affine2) {
+        if transform == &Affine2::IDENTITY {
             return;
         }
 
         for (point_index, point) in self.points.iter_mut().enumerate() {
-            *point = *transform * *point;
+            let mq_point = vec2(point.x(), point.y());
+            let mq_point = transform.transform_point2(mq_point);
+            *point = vec2f(mq_point.x, mq_point.y);
             union_rect(&mut self.bounds, *point, point_index == 0);
         }
     }
@@ -638,10 +635,31 @@ impl Segment {
     }
 
     #[inline]
-    fn transform(self, transform: &Transform2F) -> Segment {
+    fn transform(self, transform: &Affine2) -> Segment {
+        let vector = transform.translation;
+        let vector = vec2f(vector.x, vector.y);
+        let matrix = F32x4::from_slice(transform.matrix2.as_ref());
         Segment {
-            baseline: *transform * self.baseline,
-            ctrl: *transform * self.ctrl,
+            baseline: LineSegment2F::new(
+                {
+                    let halves = matrix * self.baseline.from().0.to_f32x4().xxyy();
+                    Vector2F(halves.xy() + halves.zw()) + vector
+                },
+                {
+                    let halves = matrix * self.baseline.to().0.to_f32x4().xxyy();
+                    Vector2F(halves.xy() + halves.zw()) + vector
+                },
+            ),
+            ctrl: LineSegment2F::new(
+                {
+                    let halves = matrix * self.ctrl.from().0.to_f32x4().xxyy();
+                    Vector2F(halves.xy() + halves.zw()) + vector
+                },
+                {
+                    let halves = matrix * self.ctrl.to().0.to_f32x4().xxyy();
+                    Vector2F(halves.xy() + halves.zw()) + vector
+                },
+            ),
             kind: self.kind,
             flags: self.flags,
         }
@@ -1464,10 +1482,7 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn render(&mut self, scene: Scene) {
-        let transform = Transform2F::default();
-
         self.framebuffer_flags = FramebufferFlags::empty();
-        // self.device.begin_commands();
         self.alpha_tile_count = 0;
 
         let mut next_alpha_tile_index = 0;
@@ -1478,7 +1493,6 @@ impl<'a> Renderer<'a> {
         for path_object in &scene.paths {
             let mut outline = path_object.outline.clone();
             outline.close_all_contours();
-            outline.transform(&transform);
 
             let paint_id = path_object.paint_id;
 
@@ -1511,7 +1525,6 @@ impl<'a> Renderer<'a> {
         self.draw_tiles(&tiles);
 
         // self.allocator.purge_if_needed();
-        // self.device.end_commands();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
@@ -1635,11 +1648,7 @@ impl<'a> Renderer<'a> {
         self.ctx.apply_pipeline(&self.tile_pipeline);
         self.ctx.apply_bindings(&self.tile_bindings);
 
-        let transform = self.tile_transform().to_columns();
-        let transform = transform
-            .map(|v| (0..4).map(|i| v[i]).collect::<Vec<f32>>())
-            .map(|v| Vec4::from_slice(&v));
-        let transform = Mat4::from_cols(transform[0], transform[1], transform[2], transform[3]);
+        let transform = self.tile_transform();
         let mask_storage = self.mask_storage.as_ref().unwrap();
         let texture_size = self.ctx.texture_size(mask_storage.mask_img);
         self.ctx
@@ -1723,14 +1732,14 @@ impl<'a> Renderer<'a> {
         self.tiles_vertex_indices_length = length;
     }
 
-    fn tile_transform(&self) -> Transform4F {
+    fn tile_transform(&self) -> Mat4 {
         let draw_viewport = self.viewport.size().to_f32();
-        let scale = Vector4F::new(2.0 / draw_viewport.x(), -2.0 / draw_viewport.y(), 1.0, 1.0);
-        Transform4F::from_scale(scale).translate(Vector4F::new(-1.0, 1.0, 0.0, 1.0))
+        let scale = Vec3::new(2.0 / draw_viewport.x(), -2.0 / draw_viewport.y(), 1.0);
+        Mat4::from_translation(Vec3::new(-1.0, 1.0, 0.0)) * Mat4::from_scale(scale)
     }
 }
 
-pub fn push_path(scene: &mut Scene, transform: &Transform2F, mut path: Path2D, color: &Color) {
+pub fn push_path(scene: &mut Scene, transform: &Affine2, mut path: Path2D, color: &Color) {
     let paint_id = push_color(scene, color);
     path.flush_current_contour();
     let mut outline = path.outline;

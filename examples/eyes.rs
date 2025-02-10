@@ -7,11 +7,6 @@ use {
         prelude::*,
     },
     mqpf::{push_path, ArcDirection, Path2D, Renderer, Scene, PI_2},
-    pathfinder_geometry::{
-        rect::RectF,
-        transform2d::Transform2F,
-        vector::{vec2f, Vector2F},
-    },
     std::f32::consts::PI,
 };
 
@@ -36,29 +31,24 @@ fn window_conf() -> Conf {
 
 fn draw_eyes(
     scene: &mut Scene,
-    transform: &Transform2F,
+    transform: &Affine2,
     framebuffer_size: (f32, f32),
     hidpi_factor: f32,
-    mouse_position: Vector2F,
+    mouse_position: (f32, f32),
     time: f64,
 ) {
-    let eyes_rect = RectF::new(
-        vec2f(
-            framebuffer_size.0 as f32 / hidpi_factor as f32 / 2.
-                - ((framebuffer_size.0 * 0.9) / 4.0) as f32,
-            framebuffer_size.1 as f32 / hidpi_factor as f32 / 2.
-                - ((framebuffer_size.1 * 0.9) / 4.0) as f32,
-        ),
-        vec2f(
-            ((framebuffer_size.0 * 0.9) / 2.0) as f32,
-            ((framebuffer_size.1 * 0.9) / 2.0) as f32,
-        ),
+    let eyes_rect = Rect::new(
+        framebuffer_size.0 as f32 / hidpi_factor as f32 / 2.
+            - ((framebuffer_size.0 * 0.9) / 4.0) as f32,
+        framebuffer_size.1 as f32 / hidpi_factor as f32 / 2.
+            - ((framebuffer_size.1 * 0.9) / 4.0) as f32,
+        ((framebuffer_size.0 * 0.9) / 2.0) as f32,
+        ((framebuffer_size.1 * 0.9) / 2.0) as f32,
     );
-    let eyes_radii = eyes_rect.size() * vec2f(0.23, 0.5);
-    let eyes_left_position = eyes_rect.origin() + eyes_radii;
-    let eyes_right_position =
-        eyes_rect.origin() + vec2f(eyes_rect.width() - eyes_radii.x(), eyes_radii.y());
-    let eyes_center = f32::min(eyes_radii.x(), eyes_radii.y()) * 0.5;
+    let eyes_radii = eyes_rect.size() * vec2(0.23, 0.5);
+    let eyes_left_position = eyes_rect.point() + eyes_radii;
+    let eyes_right_position = eyes_rect.point() + vec2(eyes_rect.w - eyes_radii.x, eyes_radii.y);
+    let eyes_center = f32::min(eyes_radii.x, eyes_radii.y) * 0.5;
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
     let mut path = Path2D::new();
@@ -66,23 +56,23 @@ fn draw_eyes(
     path.ellipse(eyes_right_position, eyes_radii, 0.0, 0.0, PI_2);
     push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
 
-    let mut delta = (mouse_position - eyes_right_position) / (eyes_radii);
+    let mut delta = (vec2(mouse_position.0, mouse_position.1) - eyes_right_position) / (eyes_radii);
     let distance = delta.length();
     if distance > 1.0 {
         delta *= 1.0 / distance;
     }
-    delta *= eyes_radii * vec2f(0.4, 0.5);
+    delta *= eyes_radii * vec2(0.4, 0.5);
     let mut path = Path2D::new();
     path.ellipse(
-        eyes_left_position + delta + vec2f(0.0, eyes_radii.y() * 0.25 * (1.0 - blink)),
-        vec2f(eyes_center, eyes_center * blink),
+        eyes_left_position + delta + vec2(0.0, eyes_radii.y * 0.25 * (1.0 - blink)),
+        vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
         PI_2,
     );
     path.ellipse(
-        eyes_right_position + delta + vec2f(0.0, eyes_radii.y() * 0.25 * (1.0 - blink)),
-        vec2f(eyes_center, eyes_center * blink),
+        eyes_right_position + delta + vec2(0.0, eyes_radii.y * 0.25 * (1.0 - blink)),
+        vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
         PI_2,
@@ -119,8 +109,7 @@ async fn main() {
             view_box: Rect::new(0.0, 0.0, framebuffer_size.0, framebuffer_size.1),
             ..Default::default()
         };
-        let mut transform = Transform2F::default();
-        transform *= Transform2F::from_scale(hidpi_factor as f32);
+        let transform = Affine2::from_scale(vec2(hidpi_factor, hidpi_factor));
 
         let frame_start_time = get_time();
         let frame_start_elapsed_time = frame_start_time - start_time;
@@ -129,17 +118,17 @@ async fn main() {
             &transform,
             framebuffer_size,
             hidpi_factor,
-            Vector2F::new(cursor_position.0, cursor_position.1),
+            cursor_position,
             frame_start_elapsed_time,
         );
 
         let mut path = Path2D::new();
-        let mouth_pos = vec2f(
+        let mouth_pos = vec2(
             framebuffer_size.0 / hidpi_factor as f32,
             framebuffer_size.1 / hidpi_factor as f32,
-        ) * vec2f(0.5, 0.85);
-        path.arc(mouth_pos, mouth_pos.x() * 0.18, 0.0, PI, ArcDirection::CW);
-        path.arc(mouth_pos, mouth_pos.x() * 0.16, PI, 0.0, ArcDirection::CCW);
+        ) * vec2(0.5, 0.85);
+        path.arc(mouth_pos, mouth_pos.x * 0.18, 0.0, PI, ArcDirection::CW);
+        path.arc(mouth_pos, mouth_pos.x * 0.16, PI, 0.0, ArcDirection::CCW);
         path.close_path();
         push_path(
             &mut canvas_scene,
@@ -150,6 +139,7 @@ async fn main() {
 
         renderer.render(canvas_scene);
 
+        // break;
         next_frame().await;
     }
 }
