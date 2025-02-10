@@ -6,7 +6,11 @@ use macroquad::{
     prelude::*,
 };
 use mqpf::{push_path, Path2D, Renderer, Scene, PI_2};
-use pathfinder_geometry::{rect::RectF, transform2d::Transform2F, vector::{vec2f, Vector2F}};
+use pathfinder_geometry::{
+    rect::RectF,
+    transform2d::Transform2F,
+    vector::{vec2f, Vector2F},
+};
 
 fn window_conf() -> Conf {
     let apple_gfx_api = AppleGfxApi::OpenGl;

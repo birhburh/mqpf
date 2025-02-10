@@ -75,7 +75,7 @@ pub struct Path2D {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum ArcDirection {
+pub enum ArcDirection {
     CW,
     CCW,
 }
@@ -113,6 +113,22 @@ impl Path2D {
     #[inline]
     pub fn bezier_curve_to(&mut self, ctrl0: Vector2F, ctrl1: Vector2F, to: Vector2F) {
         self.current_contour.push_cubic(ctrl0, ctrl1, to);
+    }
+
+    #[inline]
+    pub fn arc(
+        &mut self,
+        // center: Vec2,
+        center: Vector2F,
+        radius: f32,
+        start_angle: f32,
+        end_angle: f32,
+        direction: ArcDirection,
+    ) {
+        // let transform = Affine2::from_scale_angle_translation(vec2(radius, radius), 0.0, center);
+        let transform = Transform2F::from_scale(radius).translate(center);
+        self.current_contour
+            .push_arc(&transform, start_angle, end_angle, direction);
     }
 
     pub fn ellipse<A>(
@@ -1230,7 +1246,11 @@ pub struct Renderer<'a> {
 
 impl<'a> Renderer<'a> {
     /// Creates a new renderer ready to render content
-    pub fn new(ctx: &'a mut dyn RenderingBackend, framebuffer_size: (f32, f32), background_color: Color) -> Renderer<'a> {
+    pub fn new(
+        ctx: &'a mut dyn RenderingBackend,
+        framebuffer_size: (f32, f32),
+        background_color: Color,
+    ) -> Renderer<'a> {
         let viewport = RectI::new(
             Vector2I::default(),
             Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),

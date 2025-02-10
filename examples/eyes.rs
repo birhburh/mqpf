@@ -1,12 +1,19 @@
-use macroquad::{
-    miniquad::{
-        conf::{AppleGfxApi, Platform},
-        window::{dpi_scale, screen_size},
+use {
+    macroquad::{
+        miniquad::{
+            conf::{AppleGfxApi, Platform},
+            window::{dpi_scale, screen_size},
+        },
+        prelude::*,
     },
-    prelude::*,
+    mqpf::{push_path, ArcDirection, Path2D, Renderer, Scene, PI_2},
+    pathfinder_geometry::{
+        rect::RectF,
+        transform2d::Transform2F,
+        vector::{vec2f, Vector2F},
+    },
+    std::f32::consts::PI,
 };
-use mqpf::{push_path, Path2D, Renderer, Scene, PI_2};
-use pathfinder_geometry::{rect::RectF, transform2d::Transform2F, vector::{vec2f, Vector2F}};
 
 fn window_conf() -> Conf {
     let apple_gfx_api = AppleGfxApi::OpenGl;
@@ -49,7 +56,8 @@ fn draw_eyes(
     );
     let eyes_radii = eyes_rect.size() * vec2f(0.23, 0.5);
     let eyes_left_position = eyes_rect.origin() + eyes_radii;
-    let eyes_right_position = eyes_rect.origin() + vec2f(eyes_rect.width() - eyes_radii.x(), eyes_radii.y());
+    let eyes_right_position =
+        eyes_rect.origin() + vec2f(eyes_rect.width() - eyes_radii.x(), eyes_radii.y());
     let eyes_center = f32::min(eyes_radii.x(), eyes_radii.y()) * 0.5;
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
@@ -127,6 +135,21 @@ async fn main() {
             Vector2F::new(cursor_position.0, cursor_position.1),
             frame_start_elapsed_time,
         );
+
+        let mut path = Path2D::new();
+        let mouth_pos = vec2f(
+            framebuffer_size.0 / hidpi_factor as f32,
+            framebuffer_size.1 / hidpi_factor as f32,
+        ) * vec2f(0.5, 0.85);
+        path.arc(mouth_pos, mouth_pos.x() * 0.18, 0.0, PI, ArcDirection::CW);
+        path.close_path();
+        push_path(
+            &mut canvas_scene,
+            &transform,
+            path,
+            &color_u8!(220, 110, 110, 255),
+        );
+
         renderer.render(canvas_scene);
 
         next_frame().await;
