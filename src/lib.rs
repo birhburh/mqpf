@@ -29,7 +29,6 @@ use {
 #[macro_use]
 extern crate bitflags;
 
-pub const PI_2: f32 = PI * 2.0;
 const EPSILON: f32 = 0.001;
 
 static QUAD_VERTEX_POSITIONS: [f32; 8] = [0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
@@ -625,7 +624,7 @@ impl Segment {
     #[inline]
     fn split(&self, t: f32) -> (Segment, Segment) {
         if self.is_line() {
-            let (before, after) = self.as_line_segment().split(t);
+            let (before, after) = self.baseline.split(t);
             (Segment::line(before), Segment::line(after))
         } else {
             self.to_cubic().as_cubic_segment().split(t)
@@ -636,12 +635,6 @@ impl Segment {
     fn as_cubic_segment(&self) -> CubicSegment {
         debug_assert!(self.is_cubic());
         CubicSegment(self)
-    }
-
-    #[inline]
-    fn as_line_segment(&self) -> LineSegment2F {
-        debug_assert!(self.is_line());
-        self.baseline
     }
 
     #[inline]
@@ -825,24 +818,16 @@ struct BuiltPath {
 }
 
 fn round_rect_out_to_tile_bounds(rect: Rect) -> RectI {
-    let res = (
-        rect.x / TILE_WIDTH as f32,
-        rect.y / TILE_HEIGHT as f32,
-        rect.w / TILE_WIDTH as f32,
-        rect.h / TILE_HEIGHT as f32,
-    );
-    let res = (
-        res.0.floor(),
-        res.1.floor(),
-        (res.0 + res.2).ceil() - res.0.floor(),
-        (res.1 + res.3).ceil() - res.1.floor(),
-    );
-    let res = RectI::new(
-        vec2i(res.0 as i32, res.1 as i32),
-        vec2i(res.2 as i32, res.3 as i32),
-    );
-
-    res
+    RectI::new(
+        vec2i(
+            (rect.x / TILE_WIDTH as f32).floor() as i32,
+            (rect.y / TILE_HEIGHT as f32).floor() as i32,
+        ),
+        vec2i(
+            ((rect.w / TILE_WIDTH as f32).ceil() + 1.0) as i32,
+            ((rect.h / TILE_HEIGHT as f32).ceil() + 1.0) as i32,
+        ),
+    )
 }
 
 struct Tiler<'a> {

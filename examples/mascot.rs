@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use macroquad::{
     miniquad::{
         conf::{AppleGfxApi, Platform},
@@ -5,7 +7,7 @@ use macroquad::{
     },
     prelude::*,
 };
-use mqpf::{push_path, Path2D, Renderer, Scene, PI_2};
+use mqpf::{push_path, Path2D, Renderer, Scene};
 
 fn window_conf() -> Conf {
     let apple_gfx_api = AppleGfxApi::OpenGl;
@@ -51,8 +53,8 @@ fn draw_eyes(
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
     let mut path = Path2D::new();
-    path.ellipse(eyes_left_position, eyes_radii, 0.0, 0.0, PI_2);
-    path.ellipse(eyes_right_position, eyes_radii, 0.0, 0.0, PI_2);
+    path.ellipse(eyes_left_position, eyes_radii, 0.0, 0.0, PI * 2.0);
+    path.ellipse(eyes_right_position, eyes_radii, 0.0, 0.0, PI * 2.0);
     push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
 
     let mut delta = (vec2(mouse_position.0, mouse_position.1) - eyes_right_position) / (eyes_radii);
@@ -67,14 +69,14 @@ fn draw_eyes(
         vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     path.ellipse(
         eyes_right_position + delta + vec2(0.0, eyes_radii.y * 0.25 * (1.0 - blink)),
         vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     push_path(scene, transform, path, &color_u8!(32, 32, 32, 255));
 
@@ -89,7 +91,7 @@ fn draw_eyes(
         vec2(eyes_center * 0.2, eyes_center * 0.25),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     path.ellipse(
         eyes_right_position
@@ -101,7 +103,7 @@ fn draw_eyes(
         vec2(eyes_center * 0.2, eyes_center * 0.25),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
 
@@ -186,7 +188,7 @@ fn draw_eyes(
         vec2(eyes_center, eyes_center * 0.7),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     push_path(scene, transform, path, &color_u8!(32, 32, 32, 255));
 }

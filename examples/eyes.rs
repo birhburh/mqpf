@@ -6,7 +6,7 @@ use {
         },
         prelude::*,
     },
-    mqpf::{push_path, ArcDirection, Path2D, Renderer, Scene, PI_2},
+    mqpf::{push_path, ArcDirection, Path2D, Renderer, Scene},
     std::f32::consts::PI,
 };
 
@@ -52,8 +52,8 @@ fn draw_eyes(
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
     let mut path = Path2D::new();
-    path.ellipse(eyes_left_position, eyes_radii, 0.0, 0.0, PI_2);
-    path.ellipse(eyes_right_position, eyes_radii, 0.0, 0.0, PI_2);
+    path.ellipse(eyes_left_position, eyes_radii, 0.0, 0.0, PI * 2.0);
+    path.ellipse(eyes_right_position, eyes_radii, 0.0, 0.0, PI * 2.0);
     push_path(scene, transform, path, &color_u8!(220, 220, 220, 255));
 
     let mut delta = (vec2(mouse_position.0, mouse_position.1) - eyes_right_position) / (eyes_radii);
@@ -68,14 +68,14 @@ fn draw_eyes(
         vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     path.ellipse(
         eyes_right_position + delta + vec2(0.0, eyes_radii.y * 0.25 * (1.0 - blink)),
         vec2(eyes_center, eyes_center * blink),
         0.0,
         0.0,
-        PI_2,
+        PI * 2.0,
     );
     push_path(scene, transform, path, &color_u8!(32, 32, 32, 255));
 }
