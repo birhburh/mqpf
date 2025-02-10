@@ -93,23 +93,23 @@ impl Path2D {
     }
 
     #[inline]
-    pub fn move_to(&mut self, to: Vector2F) {
+    pub fn move_to(&mut self, to: Vec2) {
         self.flush_current_contour();
         self.current_contour.push_endpoint(to);
     }
 
     #[inline]
-    pub fn line_to(&mut self, to: Vector2F) {
+    pub fn line_to(&mut self, to: Vec2) {
         self.current_contour.push_endpoint(to);
     }
 
     #[inline]
-    pub fn quadratic_curve_to(&mut self, ctrl: Vector2F, to: Vector2F) {
+    pub fn quadratic_curve_to(&mut self, ctrl: Vec2, to: Vec2) {
         self.current_contour.push_quadratic(ctrl, to);
     }
 
     #[inline]
-    pub fn bezier_curve_to(&mut self, ctrl0: Vector2F, ctrl1: Vector2F, to: Vector2F) {
+    pub fn bezier_curve_to(&mut self, ctrl0: Vec2, ctrl1: Vec2, to: Vec2) {
         self.current_contour.push_cubic(ctrl0, ctrl1, to);
     }
 
@@ -204,7 +204,7 @@ impl Outline {
 
 #[derive(Clone, Debug)]
 struct Contour {
-    points: Vec<Vector2F>,
+    points: Vec<Vec2>,
     flags: Vec<PointFlags>,
     bounds: Rect,
     closed: bool,
@@ -232,7 +232,7 @@ impl Contour {
     }
 
     #[inline]
-    fn position_of(&self, index: u32) -> Vector2F {
+    fn position_of(&self, index: u32) -> Vec2 {
         self.points[index as usize]
     }
 
@@ -299,8 +299,11 @@ impl Contour {
             let half_sweep_vector = sweep_vector.halve_angle();
 
             let rotated = half_sweep_vector.rotate_by(vector);
-            let rotation = Affine2::from_cols(vec2(rotated.0.x(), rotated.0.y()), vec2(-rotated.0.y(), rotated.0.x()), vec2(0.0, 0.0));
-            dbg!(rotation);
+            let rotation = Affine2::from_cols(
+                vec2(rotated.0.x(), rotated.0.y()),
+                vec2(-rotated.0.y(), rotated.0.x()),
+                vec2(0.0, 0.0),
+            );
             segment = segment.transform(&(*transform * direction_transform * rotation));
 
             let mut push_segment_flags = PushSegmentFlags::UPDATE_BOUNDS;
@@ -344,8 +347,8 @@ impl Contour {
     }
 
     #[inline]
-    fn push_point(&mut self, point: Vector2F, flags: PointFlags, update_bounds: bool) {
-        debug_assert!(!point.x().is_nan() && !point.y().is_nan());
+    fn push_point(&mut self, point: Vec2, flags: PointFlags, update_bounds: bool) {
+        debug_assert!(!point.x.is_nan() && !point.y.is_nan());
 
         if update_bounds {
             let first = self.is_empty();
@@ -363,39 +366,43 @@ impl Contour {
         }
 
         let update_bounds = flags.contains(PushSegmentFlags::UPDATE_BOUNDS);
-        self.push_point(segment.baseline.from(), PointFlags::empty(), update_bounds);
+        let from = segment.baseline.from();
+        self.push_point(vec2(from.x(), from.y()), PointFlags::empty(), update_bounds);
 
         if !segment.is_line() {
+            let from = segment.ctrl.from();
             self.push_point(
-                segment.ctrl.from(),
+                vec2(from.x(), from.y()),
                 PointFlags::CONTROL_POINT_0,
                 update_bounds,
             );
             if !segment.is_quadratic() {
+                let to = segment.ctrl.to();
                 self.push_point(
-                    segment.ctrl.to(),
+                    vec2(to.x(), to.y()),
                     PointFlags::CONTROL_POINT_1,
                     update_bounds,
                 );
             }
         }
 
-        self.push_point(segment.baseline.to(), PointFlags::empty(), update_bounds);
+        let to = segment.baseline.to();
+        self.push_point(vec2(to.x(), to.y()), PointFlags::empty(), update_bounds);
     }
 
     #[inline]
-    pub fn push_endpoint(&mut self, to: Vector2F) {
+    pub fn push_endpoint(&mut self, to: Vec2) {
         self.push_point(to, PointFlags::empty(), true);
     }
 
     #[inline]
-    pub fn push_quadratic(&mut self, ctrl: Vector2F, to: Vector2F) {
+    pub fn push_quadratic(&mut self, ctrl: Vec2, to: Vec2) {
         self.push_point(ctrl, PointFlags::CONTROL_POINT_0, true);
         self.push_point(to, PointFlags::empty(), true);
     }
 
     #[inline]
-    pub fn push_cubic(&mut self, ctrl0: Vector2F, ctrl1: Vector2F, to: Vector2F) {
+    pub fn push_cubic(&mut self, ctrl0: Vec2, ctrl1: Vec2, to: Vec2) {
         self.push_point(ctrl0, PointFlags::CONTROL_POINT_0, true);
         self.push_point(ctrl1, PointFlags::CONTROL_POINT_1, true);
         self.push_point(to, PointFlags::empty(), true);
@@ -407,9 +414,7 @@ impl Contour {
         }
 
         for (point_index, point) in self.points.iter_mut().enumerate() {
-            let mq_point = vec2(point.x(), point.y());
-            let mq_point = transform.transform_point2(mq_point);
-            *point = vec2f(mq_point.x, mq_point.y);
+            *point = transform.transform_point2(*point);
             union_rect(&mut self.bounds, *point, point_index == 0);
         }
     }
@@ -443,8 +448,10 @@ impl Iterator for ContourIter<'_> {
 
         let point0_index = self.index - 1;
         let point0 = contour.position_of(point0_index);
+        let point0 = vec2f(point0.x, point0.y);
         if self.index == contour.len() {
             let point1 = contour.position_of(0);
+            let point1 = vec2f(point1.x, point1.y);
             self.index += 1;
             return Some(Segment::line(LineSegment2F::new(point0, point1)));
         }
@@ -452,12 +459,14 @@ impl Iterator for ContourIter<'_> {
         let point1_index = self.index;
         self.index += 1;
         let point1 = contour.position_of(point1_index);
+        let point1 = vec2f(point1.x, point1.y);
         if contour.point_is_endpoint(point1_index) {
             return Some(Segment::line(LineSegment2F::new(point0, point1)));
         }
 
         let point2_index = self.index;
         let point2 = contour.position_of(point2_index);
+        let point2 = vec2f(point2.x, point2.y);
         self.index += 1;
         if contour.point_is_endpoint(point2_index) {
             return Some(Segment::quadratic(
@@ -468,6 +477,7 @@ impl Iterator for ContourIter<'_> {
 
         let point3_index = self.index;
         let point3 = contour.position_of(point3_index);
+        let point3 = vec2f(point3.x, point3.y);
         self.index += 1;
         debug_assert!(contour.point_is_endpoint(point3_index));
         Some(Segment::cubic(
@@ -485,8 +495,8 @@ bitflags! {
 }
 
 #[inline]
-fn union_rect(bounds: &mut Rect, new_point: Vector2F, first: bool) {
-    let new_rect = Rect::new(new_point.x(), new_point.y(), new_point.x(), new_point.y());
+fn union_rect(bounds: &mut Rect, new_point: Vec2, first: bool) {
+    let new_rect = Rect::new(new_point.x, new_point.y, new_point.x, new_point.y);
     if first {
         *bounds = new_rect;
     } else {
@@ -774,7 +784,7 @@ pub struct Path {
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 struct Fill {
-    line_segment: LineSegment2F,
+    line_segment: Vec4,
     link: f32,
 }
 
@@ -1073,10 +1083,7 @@ fn add_fill(
     let alpha_tile_id =
         get_or_allocate_alpha_tile_index(built_path, next_alpha_tile_index, tile_coords);
     fills.push(Fill {
-        line_segment: LineSegment2F::new(
-            Vector2F::new(from_x as f32, from_y as f32),
-            Vector2F::new(to_x as f32, to_y as f32),
-        ),
+        line_segment: Vec4::new(from_x as f32, from_y as f32, to_x as f32, to_y as f32),
         link: {
             let alpha_tile_index = u32::from_le_bytes(alpha_tile_id.0.map(|v| v as u8));
             alpha_tile_index as f32
@@ -1164,26 +1171,28 @@ bitflags! {
     }
 }
 
-fn compute_outcode(point: Vector2F, rect: Rect) -> Outcode {
+fn compute_outcode(point: Vec2, rect: Rect) -> Outcode {
     let mut outcode = Outcode::empty();
-    if point.x() < rect.x {
+    if point.x < rect.x {
         outcode.insert(Outcode::LEFT);
     }
-    if point.y() < rect.y {
+    if point.y < rect.y {
         outcode.insert(Outcode::TOP);
     }
-    if point.x() > rect.w {
+    if point.x > rect.w {
         outcode.insert(Outcode::RIGHT);
     }
-    if point.y() > rect.h {
+    if point.y > rect.h {
         outcode.insert(Outcode::BOTTOM);
     }
     outcode
 }
 
 fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Option<LineSegment2F> {
-    let mut outcode_from = compute_outcode(line_segment.from(), rect);
-    let mut outcode_to = compute_outcode(line_segment.to(), rect);
+    let from = line_segment.from();
+    let to = line_segment.to();
+    let mut outcode_from = compute_outcode(vec2(from.x(), from.y()), rect);
+    let mut outcode_to = compute_outcode(vec2(to.x(), to.y()), rect);
 
     loop {
         if outcode_from.is_empty() && outcode_to.is_empty() {
@@ -1244,10 +1253,10 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
 
         if clip_from {
             line_segment.set_from(point);
-            outcode_from = compute_outcode(point, rect);
+            outcode_from = compute_outcode(vec2(point.x(), point.y()), rect);
         } else {
             line_segment.set_to(point);
-            outcode_to = compute_outcode(point, rect);
+            outcode_to = compute_outcode(vec2(point.x(), point.y()), rect);
         }
     }
 }
