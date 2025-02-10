@@ -10,18 +10,12 @@ use {
         },
         prelude::*,
     },
-    pathfinder_geometry::{
-        line_segment::LineSegment2F,
-        unit_vector::UnitVector,
-        util::{alignup_i32, lerp},
-        vector::{vec2f, Vector2F},
-    },
-    pathfinder_simd::default::F32x4,
     std::{
         collections::HashMap,
         f32::consts::{PI, SQRT_2},
         hash::Hash,
         mem,
+        ops::{Add, Mul, MulAssign},
     },
 };
 
@@ -200,6 +194,155 @@ impl Outline {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct LineSegment(pub Vec4);
+
+impl LineSegment {
+    #[inline]
+    pub fn new(from: Vec2, to: Vec2) -> LineSegment {
+        LineSegment(Vec4::new(from.x, from.y, to.x, to.y))
+    }
+
+    #[inline]
+    pub fn from(self) -> Vec2 {
+        self.0.xy()
+    }
+
+    #[inline]
+    pub fn to(self) -> Vec2 {
+        self.0.zw()
+    }
+
+    #[inline]
+    pub fn set_from(&mut self, point: Vec2) {
+        self.0 = Vec4::new(point.x, point.y, self.0.z, self.0.w);
+    }
+
+    #[inline]
+    pub fn set_to(&mut self, point: Vec2) {
+        self.0 = Vec4::new(self.0.x, self.0.y, point.x, point.y);
+    }
+
+    #[inline]
+    pub fn from_x(self) -> f32 {
+        self.0[0]
+    }
+
+    #[inline]
+    pub fn from_y(self) -> f32 {
+        self.0[1]
+    }
+
+    #[inline]
+    pub fn to_x(self) -> f32 {
+        self.0[2]
+    }
+
+    #[inline]
+    pub fn to_y(self) -> f32 {
+        self.0[3]
+    }
+
+    #[inline]
+    pub fn split(self, t: f32) -> (LineSegment, LineSegment) {
+        debug_assert!(t >= 0.0 && t <= 1.0);
+        let (from_from, to_to) = (self.0.xyxy(), self.0.zwzw());
+        let d_d = to_to - from_from;
+        let mid_mid = from_from + d_d * Vec4::splat(t);
+        (
+            LineSegment::new(from_from.xy(), mid_mid.xy()),
+            LineSegment::new(mid_mid.xy(), to_to.xy()),
+        )
+    }
+
+    #[inline]
+    pub fn reversed(self) -> LineSegment {
+        LineSegment(self.0.zwxy())
+    }
+
+    #[inline]
+    pub fn vector(self) -> Vec2 {
+        self.to() - self.from()
+    }
+
+    #[inline]
+    pub fn sample(self, t: f32) -> Vec2 {
+        self.from() + self.vector() * t
+    }
+}
+
+impl Add<Vec2> for LineSegment {
+    type Output = LineSegment;
+    #[inline]
+    fn add(self, point: Vec2) -> LineSegment {
+        LineSegment(self.0 + vec4(point.x, point.y, point.x, point.y))
+    }
+}
+
+impl Mul<Vec2> for LineSegment {
+    type Output = LineSegment;
+    #[inline]
+    fn mul(self, factors: Vec2) -> LineSegment {
+        LineSegment(self.0 * vec4(factors.x, factors.y, factors.x, factors.y))
+    }
+}
+
+impl Mul<f32> for LineSegment {
+    type Output = LineSegment;
+    #[inline]
+    fn mul(self, factor: f32) -> LineSegment {
+        LineSegment(self.0 * Vec4::splat(factor))
+    }
+}
+
+impl MulAssign<Vec2> for LineSegment {
+    #[inline]
+    fn mul_assign(&mut self, factors: Vec2) {
+        *self = *self * factors
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct UnitVector(pub Vec2);
+
+impl UnitVector {
+    #[inline]
+    pub fn from_angle(theta: f32) -> UnitVector {
+        UnitVector(Vec2::new(theta.cos(), theta.sin()))
+    }
+
+    /// Angle addition formula.
+    #[inline]
+    pub fn rotate_by(&self, other: UnitVector) -> UnitVector {
+        let products = vec4(self.0.x, self.0.y, self.0.y, self.0.x)
+            * vec4(other.0.x, other.0.y, other.0.x, other.0.y);
+        UnitVector(Vec2::new(
+            products[0] - products[1],
+            products[2] + products[3],
+        ))
+    }
+
+    /// Angle subtraction formula.
+    #[inline]
+    pub fn rev_rotate_by(&self, other: UnitVector) -> UnitVector {
+        let products = vec4(self.0.x, self.0.y, self.0.y, self.0.x)
+            * vec4(other.0.x, other.0.y, other.0.x, other.0.y);
+        UnitVector(Vec2::new(
+            products[0] + products[1],
+            products[2] - products[3],
+        ))
+    }
+
+    /// Half angle formula.
+    #[inline]
+    pub fn halve_angle(&self) -> UnitVector {
+        let x = self.0.x;
+        let term = Vec2::new(x, -x);
+        let halve = (Vec2::splat(0.5) * (Vec2::splat(1.0) + term)).max(Vec2::default());
+        UnitVector(vec2(halve.x.sqrt(), halve.y.sqrt()))
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Contour {
     points: Vec<Vec2>,
@@ -263,43 +406,46 @@ impl Contour {
         if end_angle - start_angle >= PI * 2.0 {
             self.push_ellipse(transform);
         } else {
-            let start = vec2f(start_angle.cos(), start_angle.sin());
-            let end = vec2f(end_angle.cos(), end_angle.sin());
-            self.push_arc_from_unit_chord(transform, LineSegment2F::new(start, end), direction);
+            let start = vec2(start_angle.cos(), start_angle.sin());
+            let end = vec2(end_angle.cos(), end_angle.sin());
+            self.push_arc_from_unit_chord(transform, LineSegment::new(start, end), direction);
         }
     }
 
     fn push_arc_from_unit_chord(
         &mut self,
         transform: &Affine2,
-        mut chord: LineSegment2F,
+        mut chord: LineSegment,
         direction: ArcDirection,
     ) {
         let mut direction_transform = Affine2::default();
         if direction == ArcDirection::CCW {
-            chord *= vec2f(1.0, -1.0);
+            chord *= vec2(1.0, -1.0);
             direction_transform = Affine2::from_scale(vec2(1.0, -1.0));
         }
 
-        let (mut vector, end_vector) = (UnitVector(chord.from()), UnitVector(chord.to()));
+        let (mut vector, end_vector) = (
+            UnitVector(vec2(chord.from().x, chord.from().y)),
+            UnitVector(vec2(chord.to().x, chord.to().y)),
+        );
         for segment_index in 0..4 {
             let mut sweep_vector = end_vector.rev_rotate_by(vector);
-            let last = sweep_vector.0.x() >= -EPSILON && sweep_vector.0.y() >= -EPSILON;
+            let last = sweep_vector.0.x >= -EPSILON && sweep_vector.0.y >= -EPSILON;
 
             let mut segment;
             if !last {
-                sweep_vector = UnitVector(vec2f(0.0, 1.0));
+                sweep_vector = UnitVector(vec2(0.0, 1.0));
                 segment = Segment::quarter_circle_arc();
             } else {
-                segment = Segment::arc_from_cos(sweep_vector.0.x());
+                segment = Segment::arc_from_cos(sweep_vector.0.x);
             }
 
             let half_sweep_vector = sweep_vector.halve_angle();
 
             let rotated = half_sweep_vector.rotate_by(vector);
             let rotation = Affine2::from_cols(
-                vec2(rotated.0.x(), rotated.0.y()),
-                vec2(-rotated.0.y(), rotated.0.x()),
+                vec2(rotated.0.x, rotated.0.y),
+                vec2(-rotated.0.y, rotated.0.x),
                 vec2(0.0, 0.0),
             );
             segment = segment.transform(&(*transform * direction_transform * rotation));
@@ -365,27 +511,23 @@ impl Contour {
 
         let update_bounds = flags.contains(PushSegmentFlags::UPDATE_BOUNDS);
         let from = segment.baseline.from();
-        self.push_point(vec2(from.x(), from.y()), PointFlags::empty(), update_bounds);
+        self.push_point(vec2(from.x, from.y), PointFlags::empty(), update_bounds);
 
         if !segment.is_line() {
             let from = segment.ctrl.from();
             self.push_point(
-                vec2(from.x(), from.y()),
+                vec2(from.x, from.y),
                 PointFlags::CONTROL_POINT_0,
                 update_bounds,
             );
             if !segment.is_quadratic() {
                 let to = segment.ctrl.to();
-                self.push_point(
-                    vec2(to.x(), to.y()),
-                    PointFlags::CONTROL_POINT_1,
-                    update_bounds,
-                );
+                self.push_point(vec2(to.x, to.y), PointFlags::CONTROL_POINT_1, update_bounds);
             }
         }
 
         let to = segment.baseline.to();
-        self.push_point(vec2(to.x(), to.y()), PointFlags::empty(), update_bounds);
+        self.push_point(vec2(to.x, to.y), PointFlags::empty(), update_bounds);
     }
 
     #[inline]
@@ -446,41 +588,33 @@ impl Iterator for ContourIter<'_> {
 
         let point0_index = self.index - 1;
         let point0 = contour.position_of(point0_index);
-        let point0 = vec2f(point0.x, point0.y);
         if self.index == contour.len() {
             let point1 = contour.position_of(0);
-            let point1 = vec2f(point1.x, point1.y);
             self.index += 1;
-            return Some(Segment::line(LineSegment2F::new(point0, point1)));
+            return Some(Segment::line(LineSegment::new(point0, point1)));
         }
 
         let point1_index = self.index;
         self.index += 1;
         let point1 = contour.position_of(point1_index);
-        let point1 = vec2f(point1.x, point1.y);
         if contour.point_is_endpoint(point1_index) {
-            return Some(Segment::line(LineSegment2F::new(point0, point1)));
+            return Some(Segment::line(LineSegment::new(point0, point1)));
         }
 
         let point2_index = self.index;
         let point2 = contour.position_of(point2_index);
-        let point2 = vec2f(point2.x, point2.y);
         self.index += 1;
         if contour.point_is_endpoint(point2_index) {
-            return Some(Segment::quadratic(
-                LineSegment2F::new(point0, point2),
-                point1,
-            ));
+            return Some(Segment::quadratic(LineSegment::new(point0, point2), point1));
         }
 
         let point3_index = self.index;
         let point3 = contour.position_of(point3_index);
-        let point3 = vec2f(point3.x, point3.y);
         self.index += 1;
         debug_assert!(contour.point_is_endpoint(point3_index));
         Some(Segment::cubic(
-            LineSegment2F::new(point0, point3),
-            LineSegment2F::new(point1, point2),
+            LineSegment::new(point0, point3),
+            LineSegment::new(point1, point2),
         ))
     }
 }
@@ -520,8 +654,8 @@ bitflags! {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Segment {
-    baseline: LineSegment2F,
-    ctrl: LineSegment2F,
+    baseline: LineSegment,
+    ctrl: LineSegment,
     kind: SegmentKind,
     flags: SegmentFlags,
 }
@@ -548,27 +682,27 @@ impl Segment {
     }
 
     #[inline]
-    fn line(line: LineSegment2F) -> Segment {
+    fn line(line: LineSegment) -> Segment {
         Segment {
             baseline: line,
-            ctrl: LineSegment2F::default(),
+            ctrl: LineSegment::default(),
             kind: SegmentKind::Line,
             flags: SegmentFlags::empty(),
         }
     }
 
     #[inline]
-    fn quadratic(baseline: LineSegment2F, ctrl: Vector2F) -> Segment {
+    fn quadratic(baseline: LineSegment, ctrl: Vec2) -> Segment {
         Segment {
             baseline,
-            ctrl: LineSegment2F::new(ctrl, Vector2F::zero()),
+            ctrl: LineSegment::new(ctrl, Vec2::ZERO),
             kind: SegmentKind::Quadratic,
             flags: SegmentFlags::empty(),
         }
     }
 
     #[inline]
-    fn cubic(baseline: LineSegment2F, ctrl: LineSegment2F) -> Segment {
+    fn cubic(baseline: LineSegment, ctrl: LineSegment) -> Segment {
         Segment {
             baseline,
             ctrl,
@@ -579,30 +713,31 @@ impl Segment {
 
     #[inline]
     fn quarter_circle_arc() -> Segment {
-        let p0 = Vector2F::splat(SQRT_2 * 0.5);
-        let p1 = vec2f(-SQRT_2 / 6.0 + 4.0 / 3.0, 7.0 * SQRT_2 / 6.0 - 4.0 / 3.0);
-        let flip = vec2f(1.0, -1.0);
+        let p0 = Vec2::splat(SQRT_2 * 0.5);
+        let p1 = vec2(-SQRT_2 / 6.0 + 4.0 / 3.0, 7.0 * SQRT_2 / 6.0 - 4.0 / 3.0);
+        let flip = vec2(1.0, -1.0);
         let (p2, p3) = (p1 * flip, p0 * flip);
-        Segment::cubic(LineSegment2F::new(p3, p0), LineSegment2F::new(p2, p1))
+        Segment::cubic(LineSegment::new(p3, p0), LineSegment::new(p2, p1))
     }
 
     fn arc_from_cos(cos_sweep_angle: f32) -> Segment {
         if cos_sweep_angle >= 1.0 - EPSILON {
-            return Segment::line(LineSegment2F::new(vec2f(1.0, 0.0), vec2f(1.0, 0.0)));
+            return Segment::line(LineSegment::new(vec2(1.0, 0.0), vec2(1.0, 0.0)));
         }
 
-        let term = F32x4::new(
+        let term = Vec4::new(
             cos_sweep_angle,
             -cos_sweep_angle,
             cos_sweep_angle,
             -cos_sweep_angle,
         );
-        let signs = F32x4::new(1.0, -1.0, 1.0, 1.0);
-        let p3p0 = ((F32x4::splat(1.0) + term) * F32x4::splat(0.5)).sqrt() * signs;
-        let (p0x, p0y) = (p3p0.z(), p3p0.w());
+        let signs = Vec4::new(1.0, -1.0, 1.0, 1.0);
+        let p3p0 = (Vec4::splat(1.0) + term) * Vec4::splat(0.5);
+        let p3p0 = vec4(p3p0.x.sqrt(), p3p0.y.sqrt(), p3p0.z.sqrt(), p3p0.w.sqrt()) * signs;
+        let (p0x, p0y) = (p3p0.z, p3p0.w);
         let (p1x, p1y) = (4.0 - p0x, (1.0 - p0x) * (3.0 - p0x) / p0y);
-        let p2p1 = F32x4::new(p1x, -p1y, p1x, p1y) * F32x4::splat(1.0 / 3.0);
-        Segment::cubic(LineSegment2F(p3p0), LineSegment2F(p2p1))
+        let p2p1 = Vec4::new(p1x, -p1y, p1x, p1y) * Vec4::splat(1.0 / 3.0);
+        Segment::cubic(LineSegment(p3p0), LineSegment(p2p1))
     }
 
     #[inline]
@@ -614,8 +749,7 @@ impl Segment {
         let mut new_segment = *self;
         let p1_2 = self.ctrl.from() + self.ctrl.from();
         new_segment.ctrl =
-            LineSegment2F::new(self.baseline.from() + p1_2, p1_2 + self.baseline.to())
-                * (1.0 / 3.0);
+            LineSegment::new(self.baseline.from() + p1_2, p1_2 + self.baseline.to()) * (1.0 / 3.0);
         new_segment.kind = SegmentKind::Cubic;
         new_segment
     }
@@ -639,27 +773,30 @@ impl Segment {
     #[inline]
     fn transform(self, transform: &Affine2) -> Segment {
         let vector = transform.translation;
-        let vector = vec2f(vector.x, vector.y);
-        let matrix = F32x4::from_slice(transform.matrix2.as_ref());
+        let matrix = Vec4::from_slice(transform.matrix2.as_ref());
         Segment {
-            baseline: LineSegment2F::new(
+            baseline: LineSegment::new(
                 {
-                    let halves = matrix * self.baseline.from().0.to_f32x4().xxyy();
-                    Vector2F(halves.xy() + halves.zw()) + vector
+                    let baseline = self.baseline.from();
+                    let halves = matrix * vec4(baseline.x, baseline.x, baseline.y, baseline.y);
+                    vec2(halves.x, halves.y) + vec2(halves.z, halves.w) + vector
                 },
                 {
-                    let halves = matrix * self.baseline.to().0.to_f32x4().xxyy();
-                    Vector2F(halves.xy() + halves.zw()) + vector
+                    let baseline = self.baseline.to();
+                    let halves = matrix * vec4(baseline.x, baseline.x, baseline.y, baseline.y);
+                    vec2(halves.x, halves.y) + vec2(halves.z, halves.w) + vector
                 },
             ),
-            ctrl: LineSegment2F::new(
+            ctrl: LineSegment::new(
                 {
-                    let halves = matrix * self.ctrl.from().0.to_f32x4().xxyy();
-                    Vector2F(halves.xy() + halves.zw()) + vector
+                    let ctrl = self.ctrl.from();
+                    let halves = matrix * vec4(ctrl.x, ctrl.x, ctrl.y, ctrl.y);
+                    vec2(halves.x, halves.y) + vec2(halves.z, halves.w) + vector
                 },
                 {
-                    let halves = matrix * self.ctrl.to().0.to_f32x4().xxyy();
-                    Vector2F(halves.xy() + halves.zw()) + vector
+                    let ctrl = self.ctrl.to();
+                    let halves = matrix * vec4(ctrl.x, ctrl.x, ctrl.y, ctrl.y);
+                    vec2(halves.x, halves.y) + vec2(halves.z, halves.w) + vector
                 },
             ),
             kind: self.kind,
@@ -674,7 +811,7 @@ struct CubicSegment<'s>(&'s Segment);
 impl CubicSegment<'_> {
     #[inline]
     fn is_flat(self, tolerance: f32) -> bool {
-        let mut uv = F32x4::splat(3.0) * self.0.ctrl.0
+        let mut uv = Vec4::splat(3.0) * self.0.ctrl.0
             - self.0.baseline.0
             - self.0.baseline.0
             - self.0.baseline.reversed().0;
@@ -688,32 +825,32 @@ impl CubicSegment<'_> {
         let (baseline0, ctrl0, baseline1, ctrl1);
         if t <= 0.0 {
             let from = &self.0.baseline.from();
-            baseline0 = LineSegment2F::new(*from, *from);
-            ctrl0 = LineSegment2F::new(*from, *from);
+            baseline0 = LineSegment::new(*from, *from);
+            ctrl0 = LineSegment::new(*from, *from);
             baseline1 = self.0.baseline;
             ctrl1 = self.0.ctrl;
         } else if t >= 1.0 {
             let to = &self.0.baseline.to();
             baseline0 = self.0.baseline;
             ctrl0 = self.0.ctrl;
-            baseline1 = LineSegment2F::new(*to, *to);
-            ctrl1 = LineSegment2F::new(*to, *to);
+            baseline1 = LineSegment::new(*to, *to);
+            ctrl1 = LineSegment::new(*to, *to);
         } else {
-            let tttt = F32x4::splat(t);
+            let tttt = Vec4::splat(t);
 
             let (p0p3, p1p2) = (self.0.baseline.0, self.0.ctrl.0);
-            let p0p1 = p0p3.concat_xy_xy(p1p2);
+            let p0p1 = vec4(p0p3.x, p0p3.y, p1p2.x, p1p2.y);
             let p01p12 = p0p1 + tttt * (p1p2 - p0p1);
             let pxxp23 = p1p2 + tttt * (p0p3 - p1p2);
-            let p12p23 = p01p12.concat_zw_zw(pxxp23);
+            let p12p23 = vec4(p01p12.z, p01p12.w, pxxp23.z, pxxp23.w);
             let p012p123 = p01p12 + tttt * (p12p23 - p01p12);
             let p123 = p012p123.zwzw();
             let p0123 = p012p123 + tttt * (p123 - p012p123);
 
-            baseline0 = LineSegment2F(p0p3.concat_xy_xy(p0123));
-            ctrl0 = LineSegment2F(p01p12.concat_xy_xy(p012p123));
-            baseline1 = LineSegment2F(p0123.concat_xy_zw(p0p3));
-            ctrl1 = LineSegment2F(p012p123.concat_zw_zw(p12p23));
+            baseline0 = LineSegment::new(p0p3.xy(), p0123.xy());
+            ctrl0 = LineSegment::new(p01p12.xy(), p012p123.xy());
+            baseline1 = LineSegment::new(p0123.xy(), p0p3.zw());
+            ctrl1 = LineSegment::new(p012p123.zw(), p12p23.zw());
         }
 
         (
@@ -919,7 +1056,7 @@ fn process_segment(
 }
 
 fn process_line_segment(
-    line_segment: LineSegment2F,
+    line_segment: LineSegment,
     view_box: Rect,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
@@ -931,37 +1068,47 @@ fn process_line_segment(
         Some(line_segment) => line_segment,
     };
 
-    let tile_size = vec2f(TILE_WIDTH as f32, TILE_HEIGHT as f32);
-    let tile_size_recip = Vector2F::splat(1.0) / tile_size;
+    let tile_size = vec2(TILE_WIDTH as f32, TILE_HEIGHT as f32);
+    let tile_size_recip = Vec2::splat(1.0) / tile_size;
 
-    let tile_line_segment = (line_segment.0 * tile_size_recip.0.concat_xy_xy(tile_size_recip.0))
-        .floor()
-        .to_i32x4();
-    let from_tile_coords = IVec2::new(tile_line_segment.x(), tile_line_segment.y());
-    let to_tile_coords = IVec2::new(tile_line_segment.z(), tile_line_segment.w());
+    let tile_line_segment = line_segment.0
+        * vec4(
+            tile_size_recip.x,
+            tile_size_recip.y,
+            tile_size_recip.x,
+            tile_size_recip.y,
+        );
+    let from_tile_coords = IVec2::new(
+        tile_line_segment.x.floor() as i32,
+        tile_line_segment.y.floor() as i32,
+    );
+    let to_tile_coords = IVec2::new(
+        tile_line_segment.z.floor() as i32,
+        tile_line_segment.w.floor() as i32,
+    );
     let vector = line_segment.vector();
     let step = ivec2(
-        if vector.x() < 0.0 { -1 } else { 1 },
-        if vector.y() < 0.0 { -1 } else { 1 },
+        if vector.x < 0.0 { -1 } else { 1 },
+        if vector.y < 0.0 { -1 } else { 1 },
     );
     let first_tile_crossing = ivec2(
-        if vector.x() < 0.0 { 0 } else { 1 },
-        if vector.y() < 0.0 { 0 } else { 1 },
+        if vector.x < 0.0 { 0 } else { 1 },
+        if vector.y < 0.0 { 0 } else { 1 },
     );
     let first_tile_crossing = from_tile_coords + first_tile_crossing;
     let first_tile_crossing =
-        vec2f(first_tile_crossing.x as f32, first_tile_crossing.y as f32) * tile_size;
+        vec2(first_tile_crossing.x as f32, first_tile_crossing.y as f32) * tile_size;
 
     let mut t_max = (first_tile_crossing - line_segment.from()) / vector;
-    let t_delta = (tile_size / vector).0.abs();
+    let t_delta = (tile_size / vector).abs();
 
     let (mut current_position, mut tile_coords) = (line_segment.from(), from_tile_coords);
     let mut last_step_direction = None;
 
     loop {
-        let next_step_direction = if t_max.x() < t_max.y() {
+        let next_step_direction = if t_max.x < t_max.y {
             StepDirection::X
-        } else if t_max.x() > t_max.y() {
+        } else if t_max.x > t_max.y {
             StepDirection::Y
         } else if step.x > 0 {
             StepDirection::X
@@ -970,9 +1117,9 @@ fn process_line_segment(
         };
 
         let next_t = (if next_step_direction == StepDirection::X {
-            t_max.x()
+            t_max.x
         } else {
-            t_max.y()
+            t_max.y
         })
         .min(1.0);
         let next_step_direction = if tile_coords == to_tile_coords {
@@ -982,7 +1129,7 @@ fn process_line_segment(
         };
 
         let next_position = line_segment.sample(next_t);
-        let clipped_line_segment = LineSegment2F::new(current_position, next_position);
+        let clipped_line_segment = LineSegment::new(current_position, next_position);
         add_fill(
             fills,
             built_path,
@@ -991,9 +1138,9 @@ fn process_line_segment(
             ivec2(tile_coords.x, tile_coords.y),
         );
         if step.y < 0 && next_step_direction == Some(StepDirection::Y) {
-            let auxiliary_segment = LineSegment2F::new(
+            let auxiliary_segment = LineSegment::new(
                 clipped_line_segment.to(),
-                vec2f(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
+                vec2(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
             );
             add_fill(
                 fills,
@@ -1003,8 +1150,8 @@ fn process_line_segment(
                 ivec2(tile_coords.x, tile_coords.y),
             );
         } else if step.y > 0 && last_step_direction == Some(StepDirection::Y) {
-            let auxiliary_segment = LineSegment2F::new(
-                vec2f(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
+            let auxiliary_segment = LineSegment::new(
+                vec2(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
                 clipped_line_segment.from(),
             );
             add_fill(
@@ -1026,14 +1173,14 @@ fn process_line_segment(
                 if tile_coords.x == to_tile_coords.x {
                     break;
                 }
-                t_max += vec2f(t_delta.x(), 0.0);
+                t_max += vec2(t_delta.x, 0.0);
                 tile_coords += ivec2(step.x, 0);
             }
             Some(StepDirection::Y) => {
                 if tile_coords.y == to_tile_coords.y {
                     break;
                 }
-                t_max += vec2f(0.0, t_delta.y());
+                t_max += vec2(0.0, t_delta.y);
                 tile_coords += ivec2(0, step.y);
             }
         }
@@ -1047,7 +1194,7 @@ fn add_fill(
     fills: &mut Vec<Fill>,
     built_path: &mut BuiltPath,
     next_alpha_tile_index: &mut usize,
-    segment: LineSegment2F,
+    segment: LineSegment,
     tile_coords: IVec2,
 ) {
     if tile_coords_to_local_index(built_path, tile_coords).is_none() {
@@ -1055,18 +1202,17 @@ fn add_fill(
     }
 
     debug_assert_eq!(TILE_WIDTH, TILE_HEIGHT);
-    let tile_size = F32x4::splat(TILE_WIDTH as f32);
-    let tile_upper_left = vec2f(tile_coords.x as f32, tile_coords.y as f32)
-        .0
-        .to_f32x4()
-        .xyxy()
-        * tile_size;
-    let segment = (segment.0 - tile_upper_left) * F32x4::splat(256.0);
-    let (min, max) = (
-        F32x4::default(),
-        F32x4::splat((TILE_WIDTH * 256 - 1) as f32),
-    );
-    let segment = segment.clamp(min, max).to_i32x4();
+    let tile_size = Vec4::splat(TILE_WIDTH as f32);
+    let tile_upper_left = vec2(tile_coords.x as f32, tile_coords.y as f32);
+    let tile_upper_left = vec4(
+        tile_upper_left.x,
+        tile_upper_left.y,
+        tile_upper_left.x,
+        tile_upper_left.y,
+    ) * tile_size;
+    let segment = (segment.0 - tile_upper_left) * Vec4::splat(256.0);
+    let (min, max) = (Vec4::default(), Vec4::splat((TILE_WIDTH * 256 - 1) as f32));
+    let segment = segment.clamp(min, max);
     let (from_x, from_y, to_x, to_y) = (segment[0], segment[1], segment[2], segment[3]);
     if from_x == to_x {
         return;
@@ -1183,11 +1329,16 @@ fn compute_outcode(point: Vec2, rect: Rect) -> Outcode {
     outcode
 }
 
-fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Option<LineSegment2F> {
+#[inline]
+pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
+
+fn clip_line_segment_to_rect(mut line_segment: LineSegment, rect: Rect) -> Option<LineSegment> {
     let from = line_segment.from();
     let to = line_segment.to();
-    let mut outcode_from = compute_outcode(vec2(from.x(), from.y()), rect);
-    let mut outcode_to = compute_outcode(vec2(to.x(), to.y()), rect);
+    let mut outcode_from = compute_outcode(vec2(from.x, from.y), rect);
+    let mut outcode_to = compute_outcode(vec2(to.x, to.y), rect);
 
     loop {
         if outcode_from.is_empty() && outcode_to.is_empty() {
@@ -1205,7 +1356,7 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
         };
 
         if outcode.contains(Outcode::LEFT) {
-            point = vec2f(
+            point = vec2(
                 rect.x,
                 lerp(
                     line_segment.from_y(),
@@ -1215,7 +1366,7 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
                 ),
             );
         } else if outcode.contains(Outcode::RIGHT) {
-            point = vec2f(
+            point = vec2(
                 rect.w,
                 lerp(
                     line_segment.from_y(),
@@ -1225,7 +1376,7 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
                 ),
             );
         } else if outcode.contains(Outcode::TOP) {
-            point = vec2f(
+            point = vec2(
                 lerp(
                     line_segment.from_x(),
                     line_segment.to_x(),
@@ -1235,7 +1386,7 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
                 rect.y,
             );
         } else if outcode.contains(Outcode::BOTTOM) {
-            point = vec2f(
+            point = vec2(
                 lerp(
                     line_segment.from_x(),
                     line_segment.to_x(),
@@ -1248,10 +1399,10 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
 
         if clip_from {
             line_segment.set_from(point);
-            outcode_from = compute_outcode(vec2(point.x(), point.y()), rect);
+            outcode_from = compute_outcode(vec2(point.x, point.y), rect);
         } else {
             line_segment.set_to(point);
-            outcode_to = compute_outcode(vec2(point.x(), point.y()), rect);
+            outcode_to = compute_outcode(vec2(point.x, point.y), rect);
         }
     }
 }
@@ -1265,6 +1416,7 @@ pub struct Renderer<'a> {
     mask_storage: Option<MaskStorage>,
     alpha_tile_count: u32,
     framebuffer_flags: FramebufferFlags,
+    _area_lut_texture: Texture2D,
     fill_pipeline: Pipeline,
     fill_bindings: Bindings,
     tile_pipeline: Pipeline,
@@ -1295,21 +1447,9 @@ impl<'a> Renderer<'a> {
             BufferSource::slice(&QUAD_VERTEX_INDICES),
         );
 
-        let image = image::load_from_memory_with_format(
+        let area_lut_texture = Texture2D::from_file_with_format(
             include_bytes!("../textures/area-lut.png"),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
-        let image = image.to_rgba8();
-
-        let area_lut_texture_id = ctx.new_texture_from_data_and_format(
-            &image,
-            TextureParams {
-                width: 256 as u32,
-                height: 256 as u32,
-                format: TextureFormat::RGBA8,
-                ..Default::default()
-            },
+            Some(ImageFormat::Png),
         );
 
         let texture_metadata_texture = ctx.new_render_texture(TextureParams {
@@ -1349,7 +1489,7 @@ impl<'a> Renderer<'a> {
         let fill_bindings = Bindings {
             vertex_buffers: vec![quad_vertex_positions_buffer, fill_buffer],
             index_buffer: quad_vertex_indices_buffer,
-            images: vec![area_lut_texture_id],
+            images: vec![area_lut_texture.raw_miniquad_id()],
         };
 
         let fill_pipeline = ctx.new_pipeline(
@@ -1464,6 +1604,7 @@ impl<'a> Renderer<'a> {
             alpha_tile_count: 0,
             framebuffer_flags: FramebufferFlags::empty(),
 
+            _area_lut_texture: area_lut_texture,
             fill_pipeline,
             fill_bindings,
 
@@ -1476,7 +1617,7 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn update_viewport(&mut self, framebuffer_size: (f32, f32)) {
-        self.viewport = IVec4::new(0,0, framebuffer_size.0 as i32, framebuffer_size.1 as i32);
+        self.viewport = IVec4::new(0, 0, framebuffer_size.0 as i32, framebuffer_size.1 as i32);
     }
 
     pub fn render(&mut self, scene: Scene) {
@@ -1526,10 +1667,10 @@ impl<'a> Renderer<'a> {
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
-        let entries_per_row = TEXTURE_METADATA_ENTRIES_PER_ROW.try_into().unwrap();
+        let entries_per_row: i32 = TEXTURE_METADATA_ENTRIES_PER_ROW.try_into().unwrap();
         let texture_width: i32 = TEXTURE_METADATA_TEXTURE_WIDTH.try_into().unwrap();
-        let padded_texel_size =
-            (alignup_i32(metadata.len() as i32, entries_per_row) * texture_width * 4) as usize;
+        let aligned = (metadata.len() as i32 + entries_per_row - 1) / entries_per_row;
+        let padded_texel_size = (aligned * texture_width * 4) as usize;
         let mut texels = Vec::with_capacity(padded_texel_size);
         for base_color in metadata {
             let texel: [u8; 4] = (*base_color).into();
@@ -1728,7 +1869,11 @@ impl<'a> Renderer<'a> {
     }
 
     fn tile_transform(&self) -> Mat4 {
-        let scale = Vec3::new(2.0 / self.viewport.z as f32, -2.0 / self.viewport.w as f32, 1.0);
+        let scale = Vec3::new(
+            2.0 / self.viewport.z as f32,
+            -2.0 / self.viewport.w as f32,
+            1.0,
+        );
         Mat4::from_translation(Vec3::new(-1.0, 1.0, 0.0)) * Mat4::from_scale(scale)
     }
 }
