@@ -12,12 +12,11 @@ use {
     },
     pathfinder_geometry::{
         line_segment::LineSegment2F,
-        rect::RectI,
         unit_vector::UnitVector,
         util::{alignup_i32, lerp},
-        vector::{vec2f, vec2i, Vector2F, Vector2I},
+        vector::{vec2f, Vector2F},
     },
-    pathfinder_simd::default::{F32x2, F32x4, U32x2},
+    pathfinder_simd::default::F32x4,
     std::{
         collections::HashMap,
         f32::consts::{PI, SQRT_2},
@@ -813,20 +812,16 @@ struct Tile {
 struct BuiltPath {
     backdrops: Vec<i32>,
     tiles: Vec<Tile>,
-    rect: RectI,
-    tile_bounds: RectI,
+    rect: IVec4,
+    tile_bounds: IVec4,
 }
 
-fn round_rect_out_to_tile_bounds(rect: Rect) -> RectI {
-    RectI::new(
-        vec2i(
-            (rect.x / TILE_WIDTH as f32).floor() as i32,
-            (rect.y / TILE_HEIGHT as f32).floor() as i32,
-        ),
-        vec2i(
-            ((rect.w / TILE_WIDTH as f32).ceil() + 1.0) as i32,
-            ((rect.h / TILE_HEIGHT as f32).ceil() + 1.0) as i32,
-        ),
+fn round_rect_out_to_tile_bounds(rect: Rect) -> IVec4 {
+    IVec4::new(
+        (rect.x / TILE_WIDTH as f32).floor() as i32,
+        (rect.y / TILE_HEIGHT as f32).floor() as i32,
+        ((rect.w / TILE_WIDTH as f32).ceil() + 1.0) as i32,
+        ((rect.h / TILE_HEIGHT as f32).ceil() + 1.0) as i32,
     )
 }
 
@@ -841,10 +836,9 @@ impl<'a> Tiler<'a> {
         let bounds = outline.bounds.intersect(view_box).unwrap_or_default();
         let tile_bounds = round_rect_out_to_tile_bounds(bounds);
 
-        let mut data =
-            Vec::with_capacity(tile_bounds.size().x() as usize * tile_bounds.size().y() as usize);
-        for y in tile_bounds.min_y()..tile_bounds.max_y() {
-            for x in tile_bounds.min_x()..tile_bounds.max_x() {
+        let mut data = Vec::with_capacity(tile_bounds.z as usize * tile_bounds.w as usize);
+        for y in tile_bounds.y..(tile_bounds.y + tile_bounds.w) {
+            for x in tile_bounds.x..(tile_bounds.x + tile_bounds.z) {
                 data.push(Tile {
                     tile_x: x as f32,
                     tile_y: y as f32,
@@ -858,7 +852,7 @@ impl<'a> Tiler<'a> {
 
         Tiler {
             built_path: BuiltPath {
-                backdrops: vec![0; tile_bounds.width() as usize],
+                backdrops: vec![0; tile_bounds.z as usize],
                 tiles: data,
                 rect: tile_bounds,
                 tile_bounds,
@@ -885,7 +879,7 @@ impl<'a> Tiler<'a> {
     fn prepare_tiles(&mut self) {
         let tiled_data = &mut self.built_path;
         let (backdrops, tiles) = (&mut tiled_data.backdrops, &mut tiled_data.tiles);
-        let tiles_across = tiled_data.rect.width() as usize;
+        let tiles_across = tiled_data.rect.z as usize;
         for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
             let column = draw_tile_index % tiles_across;
             let delta = draw_tile.backdrop as i32;
@@ -943,14 +937,20 @@ fn process_line_segment(
     let tile_line_segment = (line_segment.0 * tile_size_recip.0.concat_xy_xy(tile_size_recip.0))
         .floor()
         .to_i32x4();
-    let from_tile_coords = Vector2I(tile_line_segment.xy());
-    let to_tile_coords = Vector2I(tile_line_segment.zw());
+    let from_tile_coords = IVec2::new(tile_line_segment.x(), tile_line_segment.y());
+    let to_tile_coords = IVec2::new(tile_line_segment.z(), tile_line_segment.w());
     let vector = line_segment.vector();
-    let vector_is_negative = vector.0.packed_lt(F32x2::default());
-    let step = Vector2I((vector_is_negative | U32x2::splat(1)).to_i32x2());
+    let step = ivec2(
+        if vector.x() < 0.0 { -1 } else { 1 },
+        if vector.y() < 0.0 { -1 } else { 1 },
+    );
+    let first_tile_crossing = ivec2(
+        if vector.x() < 0.0 { 0 } else { 1 },
+        if vector.y() < 0.0 { 0 } else { 1 },
+    );
+    let first_tile_crossing = from_tile_coords + first_tile_crossing;
     let first_tile_crossing =
-        (from_tile_coords + Vector2I((!vector_is_negative & U32x2::splat(1)).to_i32x2())).to_f32()
-            * tile_size;
+        vec2f(first_tile_crossing.x as f32, first_tile_crossing.y as f32) * tile_size;
 
     let mut t_max = (first_tile_crossing - line_segment.from()) / vector;
     let t_delta = (tile_size / vector).0.abs();
@@ -963,7 +963,7 @@ fn process_line_segment(
             StepDirection::X
         } else if t_max.x() > t_max.y() {
             StepDirection::Y
-        } else if step.x() > 0 {
+        } else if step.x > 0 {
             StepDirection::X
         } else {
             StepDirection::Y
@@ -988,21 +988,23 @@ fn process_line_segment(
             built_path,
             next_alpha_tile_index,
             clipped_line_segment,
-            tile_coords,
+            ivec2(tile_coords.x, tile_coords.y),
         );
-        if step.y() < 0 && next_step_direction == Some(StepDirection::Y) {
-            let auxiliary_segment =
-                LineSegment2F::new(clipped_line_segment.to(), tile_coords.to_f32() * tile_size);
+        if step.y < 0 && next_step_direction == Some(StepDirection::Y) {
+            let auxiliary_segment = LineSegment2F::new(
+                clipped_line_segment.to(),
+                vec2f(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
+            );
             add_fill(
                 fills,
                 built_path,
                 next_alpha_tile_index,
                 auxiliary_segment,
-                tile_coords,
+                ivec2(tile_coords.x, tile_coords.y),
             );
-        } else if step.y() > 0 && last_step_direction == Some(StepDirection::Y) {
+        } else if step.y > 0 && last_step_direction == Some(StepDirection::Y) {
             let auxiliary_segment = LineSegment2F::new(
-                tile_coords.to_f32() * tile_size,
+                vec2f(tile_coords.x as f32, tile_coords.y as f32) * tile_size,
                 clipped_line_segment.from(),
             );
             add_fill(
@@ -1010,29 +1012,29 @@ fn process_line_segment(
                 built_path,
                 next_alpha_tile_index,
                 auxiliary_segment,
-                tile_coords,
+                ivec2(tile_coords.x, tile_coords.y),
             );
         }
-        if step.x() < 0 && last_step_direction == Some(StepDirection::X) {
-            adjust_alpha_tile_backdrop(built_path, tile_coords, 1);
-        } else if step.x() > 0 && next_step_direction == Some(StepDirection::X) {
-            adjust_alpha_tile_backdrop(built_path, tile_coords, -1);
+        if step.x < 0 && last_step_direction == Some(StepDirection::X) {
+            adjust_alpha_tile_backdrop(built_path, ivec2(tile_coords.x, tile_coords.y), 1);
+        } else if step.x > 0 && next_step_direction == Some(StepDirection::X) {
+            adjust_alpha_tile_backdrop(built_path, ivec2(tile_coords.x, tile_coords.y), -1);
         }
         match next_step_direction {
             None => break,
             Some(StepDirection::X) => {
-                if tile_coords.x() == to_tile_coords.x() {
+                if tile_coords.x == to_tile_coords.x {
                     break;
                 }
                 t_max += vec2f(t_delta.x(), 0.0);
-                tile_coords += vec2i(step.x(), 0);
+                tile_coords += ivec2(step.x, 0);
             }
             Some(StepDirection::Y) => {
-                if tile_coords.y() == to_tile_coords.y() {
+                if tile_coords.y == to_tile_coords.y {
                     break;
                 }
                 t_max += vec2f(0.0, t_delta.y());
-                tile_coords += vec2i(0, step.y());
+                tile_coords += ivec2(0, step.y);
             }
         }
 
@@ -1046,7 +1048,7 @@ fn add_fill(
     built_path: &mut BuiltPath,
     next_alpha_tile_index: &mut usize,
     segment: LineSegment2F,
-    tile_coords: Vector2I,
+    tile_coords: IVec2,
 ) {
     if tile_coords_to_local_index(built_path, tile_coords).is_none() {
         return;
@@ -1054,7 +1056,11 @@ fn add_fill(
 
     debug_assert_eq!(TILE_WIDTH, TILE_HEIGHT);
     let tile_size = F32x4::splat(TILE_WIDTH as f32);
-    let tile_upper_left = tile_coords.to_f32().0.to_f32x4().xyxy() * tile_size;
+    let tile_upper_left = vec2f(tile_coords.x as f32, tile_coords.y as f32)
+        .0
+        .to_f32x4()
+        .xyxy()
+        * tile_size;
     let segment = (segment.0 - tile_upper_left) * F32x4::splat(256.0);
     let (min, max) = (
         F32x4::default(),
@@ -1077,8 +1083,15 @@ fn add_fill(
 }
 
 #[inline]
-fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: Vector2I) -> Option<u32> {
-    if built_path.tile_bounds.contains_point(coords) {
+pub fn contains_point(tile_bounds: &IVec4, point: IVec2) -> bool {
+    // self.origin <= point && point <= self.lower_right - 1
+    tile_bounds.xy().cmple(point).all()
+        && point.cmple(tile_bounds.xy() + tile_bounds.zw() - 1).all()
+}
+
+#[inline]
+fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: IVec2) -> Option<u32> {
+    if contains_point(&built_path.tile_bounds, coords) {
         Some(tile_coords_to_local_index_unchecked(built_path, coords))
     } else {
         None
@@ -1088,7 +1101,7 @@ fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: Vector2I) -> O
 fn get_or_allocate_alpha_tile_index(
     built_path: &mut BuiltPath,
     next_alpha_tile_index: &mut usize,
-    tile_coords: Vector2I,
+    tile_coords: IVec2,
 ) -> AlphaTileId {
     let local_tile_index = tile_coords_to_local_index_unchecked(built_path, tile_coords) as usize;
 
@@ -1108,26 +1121,24 @@ fn get_or_allocate_alpha_tile_index(
 }
 
 #[inline]
-fn tile_coords_to_local_index_unchecked(built_path: &mut BuiltPath, coords: Vector2I) -> u32 {
+fn tile_coords_to_local_index_unchecked(built_path: &mut BuiltPath, coords: IVec2) -> u32 {
     let tile_rect = built_path.tile_bounds;
-    let offset = coords - tile_rect.origin();
-    (offset.x() + tile_rect.width() * offset.y()) as u32
+    let offset = coords - tile_rect.xy();
+    (offset.x + tile_rect.z * offset.y) as u32
 }
 
 #[inline]
-fn adjust_alpha_tile_backdrop(built_path: &mut BuiltPath, tile_coords: Vector2I, delta: i8) {
+fn adjust_alpha_tile_backdrop(built_path: &mut BuiltPath, tile_coords: IVec2, delta: i8) {
     let (tiles, backdrops) = (&mut built_path.tiles, &mut built_path.backdrops);
 
-    let tile_offset = tile_coords - built_path.rect.origin();
-    if tile_offset.x() < 0
-        || tile_offset.x() >= built_path.rect.width()
-        || tile_offset.y() >= built_path.rect.height()
+    let tile_offset = tile_coords - built_path.rect.xy();
+    if tile_offset.x < 0 || tile_offset.x >= built_path.rect.z || tile_offset.y >= built_path.rect.w
     {
         return;
     }
 
-    if tile_offset.y() < 0 {
-        backdrops[tile_offset.x() as usize] += delta as i32;
+    if tile_offset.y < 0 {
+        backdrops[tile_offset.x as usize] += delta as i32;
         return;
     }
 
@@ -1136,9 +1147,8 @@ fn adjust_alpha_tile_backdrop(built_path: &mut BuiltPath, tile_coords: Vector2I,
 }
 
 #[inline]
-fn coords_to_index_unchecked(rect: RectI, coords: Vector2I) -> usize {
-    (coords.y() - rect.min_y()) as usize * rect.size().x() as usize
-        + (coords.x() - rect.min_x()) as usize
+fn coords_to_index_unchecked(rect: IVec4, coords: IVec2) -> usize {
+    (coords.y - rect.y) as usize * rect.z as usize + (coords.x - rect.x) as usize
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1249,7 +1259,7 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Opt
 /// Main lib object that stores data necessary to render a scene.
 pub struct Renderer<'a> {
     ctx: &'a mut dyn RenderingBackend,
-    viewport: RectI,
+    viewport: IVec4,
     background_color: Color,
     texture_metadata_texture: TextureId,
     mask_storage: Option<MaskStorage>,
@@ -1272,10 +1282,7 @@ impl<'a> Renderer<'a> {
         framebuffer_size: (f32, f32),
         background_color: Color,
     ) -> Renderer<'a> {
-        let viewport = RectI::new(
-            Vector2I::default(),
-            Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
-        );
+        let viewport = IVec4::new(0, 0, framebuffer_size.0 as i32, framebuffer_size.1 as i32);
 
         let quad_vertex_positions_buffer = ctx.new_buffer(
             BufferType::VertexBuffer,
@@ -1469,10 +1476,7 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn update_viewport(&mut self, framebuffer_size: (f32, f32)) {
-        self.viewport = RectI::new(
-            Vector2I::default(),
-            Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
-        );
+        self.viewport = IVec4::new(0,0, framebuffer_size.0 as i32, framebuffer_size.1 as i32);
     }
 
     pub fn render(&mut self, scene: Scene) {
@@ -1585,7 +1589,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn draw_fills(&mut self, fill_count: u32) {
-        let mask_viewport = self.mask_viewport().size().to_f32().0;
+        let mask_viewport = self.mask_viewport();
         let mask_storage = self
             .mask_storage
             .as_ref()
@@ -1607,7 +1611,7 @@ impl<'a> Renderer<'a> {
 
         self.ctx
             .apply_uniforms(UniformsSource::table(&FillUniforms {
-                framebuffer_size: [mask_viewport[0], mask_viewport[1]],
+                framebuffer_size: [mask_viewport.z as f32, mask_viewport.w as f32],
                 tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
             }));
         self.ctx.draw(0, 6, fill_count as i32);
@@ -1685,16 +1689,13 @@ impl<'a> Renderer<'a> {
         self.tile_bindings.images[1] = mask_img;
     }
 
-    fn mask_viewport(&self) -> RectI {
+    fn mask_viewport(&self) -> IVec4 {
         let page_count = match self.mask_storage {
             Some(ref mask_storage) => mask_storage.allocated_page_count as i32,
             None => 0,
         };
         let height = MASK_FRAMEBUFFER_HEIGHT as i32 * page_count;
-        RectI::new(
-            Vector2I::default(),
-            vec2i(MASK_FRAMEBUFFER_WIDTH as i32, height),
-        )
+        IVec4::new(0, 0, MASK_FRAMEBUFFER_WIDTH as i32, height)
     }
 
     fn ensure_index_buffer(&mut self, mut length: usize) {
@@ -1727,8 +1728,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn tile_transform(&self) -> Mat4 {
-        let draw_viewport = self.viewport.size().to_f32();
-        let scale = Vec3::new(2.0 / draw_viewport.x(), -2.0 / draw_viewport.y(), 1.0);
+        let scale = Vec3::new(2.0 / self.viewport.z as f32, -2.0 / self.viewport.w as f32, 1.0);
         Mat4::from_translation(Vec3::new(-1.0, 1.0, 0.0)) * Mat4::from_scale(scale)
     }
 }
