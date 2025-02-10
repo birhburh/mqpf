@@ -21,7 +21,7 @@ fn window_conf() -> Conf {
     let window_width = 600;
     let window_height = window_width * 3 / 4;
     Conf {
-        window_title: format!("OUR BELOVED MASCOT").to_owned(),
+        window_title: format!("Face").to_owned(),
         platform: Platform {
             apple_gfx_api,
             // blocking_event_loop: true,
@@ -116,10 +116,7 @@ async fn main() {
         let cursor_position = mouse_position();
 
         let mut canvas_scene = Scene {
-            view_box: RectF::new(
-                Vector2F::zero(),
-                Vector2F::new(framebuffer_size.0, framebuffer_size.1),
-            ),
+            view_box: Rect::new(0.0, 0.0, framebuffer_size.0, framebuffer_size.1),
             ..Default::default()
         };
         let mut transform = Transform2F::default();
@@ -142,6 +139,7 @@ async fn main() {
             framebuffer_size.1 / hidpi_factor as f32,
         ) * vec2f(0.5, 0.85);
         path.arc(mouth_pos, mouth_pos.x() * 0.18, 0.0, PI, ArcDirection::CW);
+        path.arc(mouth_pos, mouth_pos.x() * 0.16, PI, 0.0, ArcDirection::CCW);
         path.close_path();
         push_path(
             &mut canvas_scene,

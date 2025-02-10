@@ -165,7 +165,7 @@ impl Path2D {
 #[derive(Clone, Debug)]
 struct Outline {
     contours: Vec<Contour>,
-    bounds: RectF,
+    bounds: Rect,
 }
 
 impl Outline {
@@ -173,7 +173,7 @@ impl Outline {
     fn new() -> Outline {
         Outline {
             contours: vec![],
-            bounds: RectF::default(),
+            bounds: Rect::default(),
         }
     }
 
@@ -185,7 +185,7 @@ impl Outline {
         if self.contours.is_empty() {
             self.bounds = contour.bounds;
         } else {
-            self.bounds = self.bounds.union_rect(contour.bounds);
+            self.bounds = self.bounds.combine_with(contour.bounds);
         }
 
         self.contours.push(contour);
@@ -201,7 +201,7 @@ impl Outline {
             contour.transform(transform);
             contour.update_bounds(&mut new_bounds);
         }
-        self.bounds = new_bounds.unwrap_or_else(RectF::default);
+        self.bounds = new_bounds.unwrap_or_default();
     }
 
     #[inline]
@@ -214,7 +214,7 @@ impl Outline {
 struct Contour {
     points: Vec<Vector2F>,
     flags: Vec<PointFlags>,
-    bounds: RectF,
+    bounds: Rect,
     closed: bool,
 }
 
@@ -224,7 +224,7 @@ impl Contour {
         Contour {
             points: vec![],
             flags: vec![],
-            bounds: RectF::default(),
+            bounds: Rect::default(),
             closed: false,
         }
     }
@@ -417,10 +417,10 @@ impl Contour {
         }
     }
 
-    fn update_bounds(&self, bounds: &mut Option<RectF>) {
+    fn update_bounds(&self, bounds: &mut Option<Rect>) {
         *bounds = Some(match *bounds {
             None => self.bounds,
-            Some(bounds) => bounds.union_rect(self.bounds),
+            Some(bounds) => bounds.combine_with(self.bounds),
         })
     }
 }
@@ -488,11 +488,12 @@ bitflags! {
 }
 
 #[inline]
-fn union_rect(bounds: &mut RectF, new_point: Vector2F, first: bool) {
+fn union_rect(bounds: &mut Rect, new_point: Vector2F, first: bool) {
+    let new_rect = Rect::new(new_point.x(), new_point.y(), new_point.x(), new_point.y());
     if first {
-        *bounds = RectF::from_points(new_point, new_point);
+        *bounds = new_rect;
     } else {
-        *bounds = bounds.union_point(new_point)
+        *bounds = bounds.combine_with(new_rect);
     }
 }
 
@@ -739,8 +740,8 @@ pub struct Scene {
     pub paths: Vec<Path>,
     pub colors: Vec<Color>,
     pub cache: HashMap<HashedColor, PaintId>,
-    pub bounds: RectF,
-    pub view_box: RectF,
+    pub bounds: Rect,
+    pub view_box: Rect,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -795,10 +796,25 @@ struct BuiltPath {
     tile_bounds: RectI,
 }
 
-fn round_rect_out_to_tile_bounds(rect: RectF) -> RectI {
-    (rect * vec2f(1.0 / TILE_WIDTH as f32, 1.0 / TILE_HEIGHT as f32))
-        .round_out()
-        .to_i32()
+fn round_rect_out_to_tile_bounds(rect: Rect) -> RectI {
+    let res = (
+        rect.x / TILE_WIDTH as f32,
+        rect.y / TILE_HEIGHT as f32,
+        rect.w / TILE_WIDTH as f32,
+        rect.h / TILE_HEIGHT as f32,
+    );
+    let res = (
+        res.0.floor(),
+        res.1.floor(),
+        (res.0 + res.2).ceil() - res.0.floor(),
+        (res.1 + res.3).ceil() - res.1.floor(),
+    );
+    let res = RectI::new(
+        vec2i(res.0 as i32, res.1 as i32),
+        vec2i(res.2 as i32, res.3 as i32),
+    );
+
+    res
 }
 
 struct Tiler<'a> {
@@ -808,8 +824,8 @@ struct Tiler<'a> {
 }
 
 impl<'a> Tiler<'a> {
-    fn new(outline: &'a Outline, view_box: RectF, paint_id: PaintId) -> Tiler<'a> {
-        let bounds = outline.bounds.intersection(view_box).unwrap_or_default();
+    fn new(outline: &'a Outline, view_box: Rect, paint_id: PaintId) -> Tiler<'a> {
+        let bounds = outline.bounds.intersect(view_box).unwrap_or_default();
         let tile_bounds = round_rect_out_to_tile_bounds(bounds);
 
         let mut data =
@@ -839,7 +855,7 @@ impl<'a> Tiler<'a> {
         }
     }
 
-    fn generate_fills(&mut self, view_box: RectF, next_alpha_tile_index: &mut usize) {
+    fn generate_fills(&mut self, view_box: Rect, next_alpha_tile_index: &mut usize) {
         for contour in &self.outline.contours {
             for segment in contour.iter() {
                 process_segment(
@@ -869,7 +885,7 @@ impl<'a> Tiler<'a> {
 
 fn process_segment(
     segment: &Segment,
-    view_box: RectF,
+    view_box: Rect,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     built_path: &mut BuiltPath,
@@ -897,15 +913,12 @@ fn process_segment(
 
 fn process_line_segment(
     line_segment: LineSegment2F,
-    view_box: RectF,
+    view_box: Rect,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     built_path: &mut BuiltPath,
 ) {
-    let clip_box = RectF::from_points(
-        vec2f(view_box.min_x(), f32::NEG_INFINITY),
-        view_box.lower_right(),
-    );
+    let clip_box = Rect::new(view_box.x, f32::NEG_INFINITY, view_box.w, view_box.h);
     let line_segment = match clip_line_segment_to_rect(line_segment, clip_box) {
         None => return,
         Some(line_segment) => line_segment,
@@ -1048,7 +1061,6 @@ fn add_fill(
         ),
         link: {
             let alpha_tile_index = u32::from_le_bytes(alpha_tile_id.0.map(|v| v as u8));
-            // dbg!(alpha_tile_index);
             alpha_tile_index as f32
         },
     });
@@ -1134,27 +1146,24 @@ bitflags! {
     }
 }
 
-fn compute_outcode(point: Vector2F, rect: RectF) -> Outcode {
+fn compute_outcode(point: Vector2F, rect: Rect) -> Outcode {
     let mut outcode = Outcode::empty();
-    if point.x() < rect.min_x() {
+    if point.x() < rect.x {
         outcode.insert(Outcode::LEFT);
     }
-    if point.y() < rect.min_y() {
+    if point.y() < rect.y {
         outcode.insert(Outcode::TOP);
     }
-    if point.x() > rect.max_x() {
+    if point.x() > rect.w {
         outcode.insert(Outcode::RIGHT);
     }
-    if point.y() > rect.max_y() {
+    if point.y() > rect.h {
         outcode.insert(Outcode::BOTTOM);
     }
     outcode
 }
 
-fn clip_line_segment_to_rect(
-    mut line_segment: LineSegment2F,
-    rect: RectF,
-) -> Option<LineSegment2F> {
+fn clip_line_segment_to_rect(mut line_segment: LineSegment2F, rect: Rect) -> Option<LineSegment2F> {
     let mut outcode_from = compute_outcode(line_segment.from(), rect);
     let mut outcode_to = compute_outcode(line_segment.to(), rect);
 
@@ -1175,21 +1184,21 @@ fn clip_line_segment_to_rect(
 
         if outcode.contains(Outcode::LEFT) {
             point = vec2f(
-                rect.min_x(),
+                rect.x,
                 lerp(
                     line_segment.from_y(),
                     line_segment.to_y(),
-                    (rect.min_x() - line_segment.from_x())
+                    (rect.x - line_segment.from_x())
                         / (line_segment.to_x() - line_segment.from_x()),
                 ),
             );
         } else if outcode.contains(Outcode::RIGHT) {
             point = vec2f(
-                rect.max_x(),
+                rect.w,
                 lerp(
                     line_segment.from_y(),
                     line_segment.to_y(),
-                    (rect.max_x() - line_segment.from_x())
+                    (rect.w - line_segment.from_x())
                         / (line_segment.to_x() - line_segment.from_x()),
                 ),
             );
@@ -1198,20 +1207,20 @@ fn clip_line_segment_to_rect(
                 lerp(
                     line_segment.from_x(),
                     line_segment.to_x(),
-                    (rect.min_y() - line_segment.from_y())
+                    (rect.y - line_segment.from_y())
                         / (line_segment.to_y() - line_segment.from_y()),
                 ),
-                rect.min_y(),
+                rect.y,
             );
         } else if outcode.contains(Outcode::BOTTOM) {
             point = vec2f(
                 lerp(
                     line_segment.from_x(),
                     line_segment.to_x(),
-                    (rect.max_y() - line_segment.from_y())
+                    (rect.h - line_segment.from_y())
                         / (line_segment.to_y() - line_segment.from_y()),
                 ),
-                rect.max_y(),
+                rect.h,
             );
         }
 
@@ -1728,7 +1737,7 @@ pub fn push_path(scene: &mut Scene, transform: &Transform2F, mut path: Path2D, c
     outline.transform(transform);
     let new_path_bounds = outline.bounds;
     scene.paths.push(Path { outline, paint_id });
-    scene.bounds = scene.bounds.union_rect(new_path_bounds);
+    scene.bounds = scene.bounds.combine_with(new_path_bounds);
 }
 
 fn push_color(scene: &mut Scene, base_color: &Color) -> PaintId {
