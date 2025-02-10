@@ -12,5 +12,4 @@ Currently this lib is mostly uses code of d3d9 implementation of pathfinder but 
 - Make it work with webgl 1 and metal:
     - store mask inside rgba8 texture instead of rgba16f if possible
     - write metal shaders
-- Reduce dependency on pathfinder libs (use glam lib that comes with macroquad instead, looks like it has simd vectors)
-- Reduce size so it will take
+- Reduce size so it will take around 1000 lines without docs
