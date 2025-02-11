@@ -60,7 +60,7 @@ pub struct TileUniforms {
 
 #[derive(Clone)]
 pub struct Path2D {
-    outline: Outline,
+    pub outline: Outline,
     current_contour: Contour,
 }
 
@@ -147,21 +147,21 @@ impl Path2D {
 }
 
 #[derive(Clone, Debug)]
-struct Outline {
-    contours: Vec<Contour>,
-    bounds: Rect,
+pub struct Outline {
+    pub contours: Vec<Contour>,
+    pub bounds: Rect,
 }
 
 impl Outline {
     #[inline]
-    fn new() -> Outline {
+    pub fn new() -> Outline {
         Outline {
             contours: vec![],
             bounds: Rect::default(),
         }
     }
 
-    fn push_contour(&mut self, contour: Contour) {
+    pub fn push_contour(&mut self, contour: Contour) {
         if contour.is_empty() {
             return;
         }
@@ -175,7 +175,57 @@ impl Outline {
         self.contours.push(contour);
     }
 
-    fn transform(&mut self, transform: &Affine2) {
+    #[inline]
+    pub fn from_segments<I>(segments: I) -> Outline
+    where
+        I: Iterator<Item = Segment>,
+    {
+        let mut outline = Outline::new();
+        let mut current_contour = Contour::new();
+
+        for segment in segments {
+            if segment.flags.contains(SegmentFlags::FIRST_IN_SUBPATH) {
+                if !current_contour.is_empty() {
+                    outline
+                        .contours
+                        .push(mem::replace(&mut current_contour, Contour::new()));
+                }
+                current_contour.push_point(segment.baseline.from(), PointFlags::empty(), true);
+            }
+
+            if segment.flags.contains(SegmentFlags::CLOSES_SUBPATH) {
+                if !current_contour.is_empty() {
+                    current_contour.close();
+                    let contour = mem::replace(&mut current_contour, Contour::new());
+                    outline.push_contour(contour);
+                }
+                continue;
+            }
+
+            if segment.is_none() {
+                continue;
+            }
+
+            if !segment.is_line() {
+                current_contour.push_point(segment.ctrl.from(), PointFlags::CONTROL_POINT_0, true);
+                if !segment.is_quadratic() {
+                    current_contour.push_point(
+                        segment.ctrl.to(),
+                        PointFlags::CONTROL_POINT_1,
+                        true,
+                    );
+                }
+            }
+
+            current_contour.push_point(segment.baseline.to(), PointFlags::empty(), true);
+        }
+
+        outline.push_contour(current_contour);
+        outline
+    }
+
+
+    pub fn transform(&mut self, transform: &Affine2) {
         if transform == &Affine2::IDENTITY {
             return;
         }
@@ -269,6 +319,40 @@ impl LineSegment {
     pub fn sample(self, t: f32) -> Vec2 {
         self.from() + self.vector() * t
     }
+
+    #[inline]
+    pub fn is_zero_length(self) -> bool {
+        self.vector() == Vec2::ZERO
+    }
+
+    #[inline]
+    pub fn offset(self, distance: f32) -> LineSegment {
+        if self.is_zero_length() {
+            self
+        } else {
+            self + self.vector().yx().normalize() * vec2(-distance, distance)
+        }
+    }
+
+    // TODO(pcwalton): Optimize with SIMD.
+    #[inline]
+    pub fn square_length(self) -> f32 {
+        let (dx, dy) = (self.to_x() - self.from_x(), self.to_y() - self.from_y());
+        dx * dx + dy * dy
+    }
+
+    // http://www.cs.swan.ac.uk/~cssimon/line_intersection.html
+    pub fn intersection_t(self, other: LineSegment) -> Option<f32> {
+        let p0p1 = self.vector();
+        let other_p = other.vector();
+        let matrix = Mat2::from_cols(other_p, -p0p1);
+        if f32::abs(matrix.determinant()) < EPSILON {
+            return None;
+        }
+        return Some((matrix.inverse() * (self.from() - other.from())).y);
+
+        const EPSILON: f32 = 0.0001;
+    }
 }
 
 impl Add<Vec2> for LineSegment {
@@ -344,16 +428,16 @@ impl UnitVector {
 }
 
 #[derive(Clone, Debug)]
-struct Contour {
+pub struct Contour {
     points: Vec<Vec2>,
     flags: Vec<PointFlags>,
     bounds: Rect,
-    closed: bool,
+    pub closed: bool,
 }
 
 impl Contour {
     #[inline]
-    fn new() -> Contour {
+    pub fn new() -> Contour {
         Contour {
             points: vec![],
             flags: vec![],
@@ -368,17 +452,22 @@ impl Contour {
     }
 
     #[inline]
-    fn len(&self) -> u32 {
+    pub fn len(&self) -> u32 {
         self.points.len() as u32
     }
 
     #[inline]
-    fn position_of(&self, index: u32) -> Vec2 {
+    pub fn position_of(&self, index: u32) -> Vec2 {
         self.points[index as usize]
     }
 
     #[inline]
-    fn iter(&self) -> ContourIter {
+    pub fn position_of_last(&self, index: u32) -> Vec2 {
+        self.points[self.points.len() - index as usize]
+    }
+
+    #[inline]
+    pub fn iter(&self) -> ContourIter {
         ContourIter {
             contour: self,
             index: 1,
@@ -412,7 +501,7 @@ impl Contour {
         }
     }
 
-    fn push_arc_from_unit_chord(
+    pub fn push_arc_from_unit_chord(
         &mut self,
         transform: &Affine2,
         mut chord: LineSegment,
@@ -504,7 +593,7 @@ impl Contour {
     }
 
     #[inline]
-    fn push_segment(&mut self, segment: &Segment, flags: PushSegmentFlags) {
+    pub fn push_segment(&mut self, segment: &Segment, flags: PushSegmentFlags) {
         if segment.is_none() {
             return;
         }
@@ -559,7 +648,7 @@ impl Contour {
         }
     }
 
-    fn update_bounds(&self, bounds: &mut Option<Rect>) {
+    pub fn update_bounds(&self, bounds: &mut Option<Rect>) {
         *bounds = Some(match *bounds {
             None => self.bounds,
             Some(bounds) => bounds.combine_with(self.bounds),
@@ -567,7 +656,7 @@ impl Contour {
     }
 }
 
-struct ContourIter<'a> {
+pub struct ContourIter<'a> {
     contour: &'a Contour,
     index: u32,
 }
@@ -646,18 +735,18 @@ enum SegmentKind {
 }
 
 bitflags! {
-    struct SegmentFlags: u8 {
+    pub struct SegmentFlags: u8 {
         const FIRST_IN_SUBPATH = 0x01;
         const CLOSES_SUBPATH = 0x02;
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Segment {
-    baseline: LineSegment,
-    ctrl: LineSegment,
+pub struct Segment {
+    pub baseline: LineSegment,
+    pub ctrl: LineSegment,
     kind: SegmentKind,
-    flags: SegmentFlags,
+    pub flags: SegmentFlags,
 }
 
 impl Segment {
@@ -667,22 +756,22 @@ impl Segment {
     }
 
     #[inline]
-    fn is_line(&self) -> bool {
+    pub fn is_line(&self) -> bool {
         self.kind == SegmentKind::Line
     }
 
     #[inline]
-    fn is_quadratic(&self) -> bool {
+    pub fn is_quadratic(&self) -> bool {
         self.kind == SegmentKind::Quadratic
     }
 
     #[inline]
-    fn is_cubic(&self) -> bool {
+    pub fn is_cubic(&self) -> bool {
         self.kind == SegmentKind::Cubic
     }
 
     #[inline]
-    fn line(line: LineSegment) -> Segment {
+    pub fn line(line: LineSegment) -> Segment {
         Segment {
             baseline: line,
             ctrl: LineSegment::default(),
@@ -692,7 +781,7 @@ impl Segment {
     }
 
     #[inline]
-    fn quadratic(baseline: LineSegment, ctrl: Vec2) -> Segment {
+    pub fn quadratic(baseline: LineSegment, ctrl: Vec2) -> Segment {
         Segment {
             baseline,
             ctrl: LineSegment::new(ctrl, Vec2::ZERO),
@@ -702,7 +791,7 @@ impl Segment {
     }
 
     #[inline]
-    fn cubic(baseline: LineSegment, ctrl: LineSegment) -> Segment {
+    pub fn cubic(baseline: LineSegment, ctrl: LineSegment) -> Segment {
         Segment {
             baseline,
             ctrl,
@@ -755,13 +844,20 @@ impl Segment {
     }
 
     #[inline]
-    fn split(&self, t: f32) -> (Segment, Segment) {
+    pub fn split(&self, t: f32) -> (Segment, Segment) {
         if self.is_line() {
             let (before, after) = self.baseline.split(t);
             (Segment::line(before), Segment::line(after))
         } else {
             self.to_cubic().as_cubic_segment().split(t)
         }
+    }
+
+    /// If this segment is a line, returns it. In debug builds, panics otherwise.
+    #[inline]
+    pub fn as_line_segment(&self) -> LineSegment {
+        debug_assert!(self.is_line());
+        self.baseline
     }
 
     #[inline]
@@ -801,6 +897,45 @@ impl Segment {
             ),
             kind: self.kind,
             flags: self.flags,
+        }
+    }
+
+    pub fn arc_length(&self) -> f32 {
+        // FIXME(pcwalton)
+        self.baseline.vector().length()
+    }
+
+    pub fn time_for_distance(&self, distance: f32) -> f32 {
+        // FIXME(pcwalton)
+        distance / self.arc_length()
+    }
+
+    /// Returns this segment with endpoints and control points reversed.
+    #[inline]
+    pub fn reversed(&self) -> Segment {
+        Segment {
+            baseline: self.baseline.reversed(),
+            ctrl: if self.is_quadratic() {
+                self.ctrl
+            } else {
+                self.ctrl.reversed()
+            },
+            kind: self.kind,
+            flags: self.flags,
+        }
+    }
+
+    /// Returns the position of the point on this line or curve with the given parametric t value,
+    /// which must range from 0.0 to 1.0.
+    ///
+    /// If called on an invalid segment (`None` type), the result is unspecified.
+    #[inline]
+    pub fn sample(self, t: f32) -> Vec2 {
+        // FIXME(pcwalton): Don't degree elevate!
+        if self.is_line() {
+            self.as_line_segment().sample(t)
+        } else {
+            self.to_cubic().as_cubic_segment().sample(t)
         }
     }
 }
@@ -868,10 +1003,19 @@ impl CubicSegment<'_> {
             },
         )
     }
+
+    /// Returns the position of the point on this curve at parametric time `t`, which will be
+    /// clamped between 0.0 and 1.0.
+    ///
+    /// FIXME(pcwalton): Use Horner's method!
+    #[inline]
+    pub fn sample(self, t: f32) -> Vec2 {
+        self.split(t).0.baseline.to()
+    }
 }
 
 bitflags! {
-    struct PushSegmentFlags: u8 {
+    pub struct PushSegmentFlags: u8 {
         const UPDATE_BOUNDS = 0x01;
         const INCLUDE_FROM_POINT = 0x02;
     }
