@@ -1,10 +1,17 @@
 use {
+    glam::{vec2, Affine2, Vec4, Vec4Swizzles},
     macroquad::{
+        color::{Color, DARKGRAY},
+        color_u8,
+        input::mouse_position,
         miniquad::{
             conf::{AppleGfxApi, Platform},
             window::{dpi_scale, screen_size},
         },
-        prelude::*,
+        time::get_time,
+        window::{
+            clear_background, get_internal_gl, next_frame, screen_height, screen_width, Conf,
+        },
     },
     mqpf::{push_path, ArcDirection, Path2D, Renderer, Scene},
     std::f32::consts::PI,
@@ -37,7 +44,7 @@ fn draw_eyes(
     mouse_position: (f32, f32),
     time: f64,
 ) {
-    let eyes_rect = Rect::new(
+    let eyes_rect = Vec4::new(
         framebuffer_size.0 as f32 / hidpi_factor as f32 / 2.
             - ((framebuffer_size.0 * 0.9) / 4.0) as f32,
         framebuffer_size.1 as f32 / hidpi_factor as f32 / 2.
@@ -45,9 +52,9 @@ fn draw_eyes(
         ((framebuffer_size.0 * 0.9) / 2.0) as f32,
         ((framebuffer_size.1 * 0.9) / 2.0) as f32,
     );
-    let eyes_radii = eyes_rect.size() * vec2(0.23, 0.5);
-    let eyes_left_position = eyes_rect.point() + eyes_radii;
-    let eyes_right_position = eyes_rect.point() + vec2(eyes_rect.w - eyes_radii.x, eyes_radii.y);
+    let eyes_radii = eyes_rect.zw() * vec2(0.23, 0.5);
+    let eyes_left_position = eyes_rect.xy() + eyes_radii;
+    let eyes_right_position = eyes_rect.xy() + vec2(eyes_rect.z - eyes_radii.x, eyes_radii.y);
     let eyes_center = f32::min(eyes_radii.x, eyes_radii.y) * 0.5;
     let blink = (1.0 - f64::powf((time * 0.5).sin(), 200.0) * 0.8) as f32;
 
@@ -106,7 +113,7 @@ async fn main() {
         let cursor_position = mouse_position();
 
         let mut canvas_scene = Scene {
-            view_box: Rect::new(0.0, 0.0, framebuffer_size.0, framebuffer_size.1),
+            view_box: Vec4::new(0.0, 0.0, framebuffer_size.0, framebuffer_size.1),
             ..Default::default()
         };
         let transform = Affine2::from_scale(vec2(hidpi_factor, hidpi_factor));
@@ -137,7 +144,7 @@ async fn main() {
             &color_u8!(220, 110, 110, 255),
         );
 
-        renderer.render(canvas_scene);
+        renderer.render(&canvas_scene);
 
         // break;
         next_frame().await;

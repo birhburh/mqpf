@@ -7,9 +7,11 @@ license = "MIT"
 repository = "https://github.com/birhburh/mqpf"
 
 [dependencies]
+glam = {version = "0.29.2", features = ["core-simd"] }
 # macroquad = { path = "../macroquad" }
 macroquad = { version = "0.4.13", git = "https://github.com/not-fl3/macroquad", rev = "b6f43bb868e776540ef8ebebd10299f1aac1c06c"}
 bitflags = "1.0"
 
 [patch.crates-io]
-miniquad = { version = "0.4.7", git = "https://github.com/not-fl3/miniquad", rev = "ec99dab891d21bc664957afdc3e743942b7c4926" }
+# miniquad = { version = "0.4.7", git = "https://github.com/not-fl3/miniquad", rev = "ec99dab891d21bc664957afdc3e743942b7c4926" }
+miniquad = { path = "../miniquad" }

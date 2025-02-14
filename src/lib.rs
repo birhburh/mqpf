@@ -1,14 +1,21 @@
 // Most of the code for RAVG rendering stolen from https://github.com/servo/pathfinder
 
 use {
+    glam::{
+        ivec2, vec2, vec4, Affine2, IVec2, IVec4, Mat2, Mat4, Vec2, Vec2Swizzles, Vec3, Vec4,
+        Vec4Swizzles,
+    },
     macroquad::{
+        color::Color,
         miniquad::{
             Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferId, BufferLayout,
-            BufferSource, BufferType, BufferUsage, Equation, PassAction, Pipeline,
-            RenderingBackend, ShaderMeta, TextureFormat, TextureId, TextureParams,
-            UniformBlockLayout, UniformsSource, VertexAttribute, VertexFormat, VertexStep,
+            BufferSource, BufferType, BufferUsage, Equation, PassAction, Pipeline, PipelineParams,
+            RenderPass, RenderingBackend, ShaderMeta, ShaderSource, TextureFormat, TextureId,
+            TextureParams, UniformBlockLayout, UniformDesc, UniformType, UniformsSource,
+            VertexAttribute, VertexFormat, VertexStep,
         },
-        prelude::*,
+        prelude::ImageFormat,
+        texture::Texture2D,
     },
     std::{
         collections::HashMap,
@@ -146,10 +153,30 @@ impl Path2D {
     }
 }
 
+pub fn combine_with(rect1: &Vec4, rect2: &Vec4) -> Vec4 {
+    let x = f32::min(rect1.x, rect2.x);
+    let y = f32::min(rect1.y, rect2.y);
+    let w = f32::max(rect1.x + rect1.z, rect2.x + rect2.z) - x;
+    let h = f32::max(rect1.y + rect1.w, rect2.y + rect2.w) - y;
+    Vec4::new(x, y, w, h)
+}
+
+pub fn intersect(rect1: &Vec4, rect2: &Vec4) -> Option<Vec4> {
+    let left = rect1.x.max(rect2.x);
+    let top = rect1.y.max(rect2.y);
+    let right = (rect1.x + rect1.z).min(rect2.x + rect2.z);
+    let bottom = (rect1.y + rect1.w).min(rect2.y + rect2.w);
+
+    if right < left || bottom < top {
+        return None;
+    }
+
+    Some(vec4(left, top, right - left, bottom - top))
+}
 #[derive(Clone, Debug)]
 pub struct Outline {
     pub contours: Vec<Contour>,
-    pub bounds: Rect,
+    pub bounds: Vec4,
 }
 
 impl Outline {
@@ -157,7 +184,7 @@ impl Outline {
     pub fn new() -> Outline {
         Outline {
             contours: vec![],
-            bounds: Rect::default(),
+            bounds: Vec4::default(),
         }
     }
 
@@ -169,7 +196,7 @@ impl Outline {
         if self.contours.is_empty() {
             self.bounds = contour.bounds;
         } else {
-            self.bounds = self.bounds.combine_with(contour.bounds);
+            self.bounds = combine_with(&self.bounds, &contour.bounds);
         }
 
         self.contours.push(contour);
@@ -223,7 +250,6 @@ impl Outline {
         outline.push_contour(current_contour);
         outline
     }
-
 
     pub fn transform(&mut self, transform: &Affine2) {
         if transform == &Affine2::IDENTITY {
@@ -431,7 +457,7 @@ impl UnitVector {
 pub struct Contour {
     points: Vec<Vec2>,
     flags: Vec<PointFlags>,
-    bounds: Rect,
+    bounds: Vec4,
     pub closed: bool,
 }
 
@@ -441,7 +467,7 @@ impl Contour {
         Contour {
             points: vec![],
             flags: vec![],
-            bounds: Rect::default(),
+            bounds: Vec4::default(),
             closed: false,
         }
     }
@@ -648,10 +674,10 @@ impl Contour {
         }
     }
 
-    pub fn update_bounds(&self, bounds: &mut Option<Rect>) {
+    pub fn update_bounds(&self, bounds: &mut Option<Vec4>) {
         *bounds = Some(match *bounds {
             None => self.bounds,
-            Some(bounds) => bounds.combine_with(self.bounds),
+            Some(bounds) => combine_with(&bounds, &self.bounds),
         })
     }
 }
@@ -716,12 +742,12 @@ bitflags! {
 }
 
 #[inline]
-fn union_rect(bounds: &mut Rect, new_point: Vec2, first: bool) {
-    let new_rect = Rect::new(new_point.x, new_point.y, new_point.x, new_point.y);
+fn union_rect(bounds: &mut Vec4, new_point: Vec2, first: bool) {
+    let new_rect = Vec4::new(new_point.x, new_point.y, new_point.x, new_point.y);
     if first {
         *bounds = new_rect;
     } else {
-        *bounds = bounds.combine_with(new_rect);
+        *bounds = combine_with(bounds, &new_rect);
     }
 }
 
@@ -1041,8 +1067,8 @@ pub struct Scene {
     pub paths: Vec<Path>,
     pub colors: Vec<Color>,
     pub cache: HashMap<HashedColor, PaintId>,
-    pub bounds: Rect,
-    pub view_box: Rect,
+    pub bounds: Vec4,
+    pub view_box: Vec4,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -1070,7 +1096,7 @@ bitflags! {
 
 struct MaskStorage {
     mask_img: TextureId,
-    render_pass: miniquad::RenderPass,
+    render_pass: RenderPass,
     allocated_page_count: u32,
 }
 
@@ -1097,12 +1123,12 @@ struct BuiltPath {
     tile_bounds: IVec4,
 }
 
-fn round_rect_out_to_tile_bounds(rect: Rect) -> IVec4 {
+fn round_rect_out_to_tile_bounds(rect: Vec4) -> IVec4 {
     IVec4::new(
         (rect.x / TILE_WIDTH as f32).floor() as i32,
         (rect.y / TILE_HEIGHT as f32).floor() as i32,
-        ((rect.w / TILE_WIDTH as f32).ceil() + 1.0) as i32,
-        ((rect.h / TILE_HEIGHT as f32).ceil() + 1.0) as i32,
+        ((rect.z / TILE_WIDTH as f32).ceil() + 1.0) as i32,
+        ((rect.w / TILE_HEIGHT as f32).ceil() + 1.0) as i32,
     )
 }
 
@@ -1113,8 +1139,8 @@ struct Tiler<'a> {
 }
 
 impl<'a> Tiler<'a> {
-    fn new(outline: &'a Outline, view_box: Rect, paint_id: PaintId) -> Tiler<'a> {
-        let bounds = outline.bounds.intersect(view_box).unwrap_or_default();
+    fn new(outline: &'a Outline, view_box: Vec4, paint_id: PaintId) -> Tiler<'a> {
+        let bounds = intersect(&outline.bounds, &view_box).unwrap_or_default();
         let tile_bounds = round_rect_out_to_tile_bounds(bounds);
 
         let mut data = Vec::with_capacity(tile_bounds.z as usize * tile_bounds.w as usize);
@@ -1143,7 +1169,7 @@ impl<'a> Tiler<'a> {
         }
     }
 
-    fn generate_fills(&mut self, view_box: Rect, next_alpha_tile_index: &mut usize) {
+    fn generate_fills(&mut self, view_box: Vec4, next_alpha_tile_index: &mut usize) {
         for contour in &self.outline.contours {
             for segment in contour.iter() {
                 process_segment(
@@ -1173,7 +1199,7 @@ impl<'a> Tiler<'a> {
 
 fn process_segment(
     segment: &Segment,
-    view_box: Rect,
+    view_box: Vec4,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     built_path: &mut BuiltPath,
@@ -1201,12 +1227,12 @@ fn process_segment(
 
 fn process_line_segment(
     line_segment: LineSegment,
-    view_box: Rect,
+    view_box: Vec4,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     built_path: &mut BuiltPath,
 ) {
-    let clip_box = Rect::new(view_box.x, f32::NEG_INFINITY, view_box.w, view_box.h);
+    let clip_box = Vec4::new(view_box.x, f32::NEG_INFINITY, view_box.z, view_box.w);
     let line_segment = match clip_line_segment_to_rect(line_segment, clip_box) {
         None => return,
         Some(line_segment) => line_segment,
@@ -1456,7 +1482,7 @@ bitflags! {
     }
 }
 
-fn compute_outcode(point: Vec2, rect: Rect) -> Outcode {
+fn compute_outcode(point: Vec2, rect: Vec4) -> Outcode {
     let mut outcode = Outcode::empty();
     if point.x < rect.x {
         outcode.insert(Outcode::LEFT);
@@ -1464,10 +1490,10 @@ fn compute_outcode(point: Vec2, rect: Rect) -> Outcode {
     if point.y < rect.y {
         outcode.insert(Outcode::TOP);
     }
-    if point.x > rect.w {
+    if point.x > rect.z {
         outcode.insert(Outcode::RIGHT);
     }
-    if point.y > rect.h {
+    if point.y > rect.w {
         outcode.insert(Outcode::BOTTOM);
     }
     outcode
@@ -1478,7 +1504,7 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-fn clip_line_segment_to_rect(mut line_segment: LineSegment, rect: Rect) -> Option<LineSegment> {
+fn clip_line_segment_to_rect(mut line_segment: LineSegment, rect: Vec4) -> Option<LineSegment> {
     let from = line_segment.from();
     let to = line_segment.to();
     let mut outcode_from = compute_outcode(vec2(from.x, from.y), rect);
@@ -1511,11 +1537,11 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment, rect: Rect) -> Optio
             );
         } else if outcode.contains(Outcode::RIGHT) {
             point = vec2(
-                rect.w,
+                rect.z,
                 lerp(
                     line_segment.from_y(),
                     line_segment.to_y(),
-                    (rect.w - line_segment.from_x())
+                    (rect.z - line_segment.from_x())
                         / (line_segment.to_x() - line_segment.from_x()),
                 ),
             );
@@ -1534,10 +1560,10 @@ fn clip_line_segment_to_rect(mut line_segment: LineSegment, rect: Rect) -> Optio
                 lerp(
                     line_segment.from_x(),
                     line_segment.to_x(),
-                    (rect.h - line_segment.from_y())
+                    (rect.w - line_segment.from_y())
                         / (line_segment.to_y() - line_segment.from_y()),
                 ),
-                rect.h,
+                rect.w,
             );
         }
 
@@ -1764,7 +1790,7 @@ impl<'a> Renderer<'a> {
         self.viewport = IVec4::new(0, 0, framebuffer_size.0 as i32, framebuffer_size.1 as i32);
     }
 
-    pub fn render(&mut self, scene: Scene) {
+    pub fn render(&mut self, scene: &Scene) {
         self.framebuffer_flags = FramebufferFlags::empty();
         self.alpha_tile_count = 0;
 
@@ -2029,7 +2055,7 @@ pub fn push_path(scene: &mut Scene, transform: &Affine2, mut path: Path2D, color
     outline.transform(transform);
     let new_path_bounds = outline.bounds;
     scene.paths.push(Path { outline, paint_id });
-    scene.bounds = scene.bounds.combine_with(new_path_bounds);
+    scene.bounds = combine_with(&scene.bounds, &new_path_bounds);
 }
 
 fn push_color(scene: &mut Scene, base_color: &Color) -> PaintId {
