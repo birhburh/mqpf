@@ -1327,6 +1327,7 @@ pub struct Renderer<'a> {
     mask_storage: Option<MaskStorage>,
     alpha_tile_count: u32,
     framebuffer_flags: FramebufferFlags,
+    _area_lut_texture: Texture2D,
     fill_pipeline: Pipeline,
     fill_bindings: Bindings,
     tile_pipeline: Pipeline,
@@ -1360,21 +1361,9 @@ impl<'a> Renderer<'a> {
             BufferSource::slice(&QUAD_VERTEX_INDICES),
         );
 
-        let image = image::load_from_memory_with_format(
+        let area_lut_texture = Texture2D::from_file_with_format(
             include_bytes!("../textures/area-lut.png"),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
-        let image = image.to_rgba8();
-
-        let area_lut_texture_id = ctx.new_texture_from_data_and_format(
-            &image,
-            TextureParams {
-                width: 256 as u32,
-                height: 256 as u32,
-                format: TextureFormat::RGBA8,
-                ..Default::default()
-            },
+            Some(ImageFormat::Png),
         );
 
         let texture_metadata_texture = ctx.new_render_texture(TextureParams {
@@ -1414,7 +1403,7 @@ impl<'a> Renderer<'a> {
         let fill_bindings = Bindings {
             vertex_buffers: vec![quad_vertex_positions_buffer, fill_buffer],
             index_buffer: quad_vertex_indices_buffer,
-            images: vec![area_lut_texture_id],
+            images: vec![area_lut_texture.raw_miniquad_id()],
         };
 
         let fill_pipeline = ctx.new_pipeline(
@@ -1529,6 +1518,7 @@ impl<'a> Renderer<'a> {
             alpha_tile_count: 0,
             framebuffer_flags: FramebufferFlags::empty(),
 
+            _area_lut_texture: area_lut_texture,
             fill_pipeline,
             fill_bindings,
 
