@@ -894,14 +894,14 @@ async fn main() {
 
         let side_size = tree.size().width().min(tree.size().height());
         let mut scale = if screen_width() < screen_height() {
-            screen_width() / side_size * 0.9
+            framebuffer_size.0 / side_size * 0.9
         } else {
-            screen_height() / side_size * 0.9
+            framebuffer_size.1 / side_size * 0.9
         };
 
         let mut transform = Transform2F::from_translation(vec2f(
-            screen_width() / 2.0 - side_size * scale / 2.0,
-            screen_height() / 2.0 - side_size * scale / 2.0,
+            framebuffer_size.0 / 2.0 - side_size * scale / 2.0,
+            framebuffer_size.1 / 2.0 - side_size * scale / 2.0,
         ));
         transform *= Transform2F::from_scale(vec2f(scale, scale));
 
