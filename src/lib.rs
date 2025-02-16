@@ -1537,7 +1537,7 @@ impl<'a> Renderer<'a> {
         );
     }
 
-    pub fn render(&mut self, scene: Scene) {
+    pub fn render(&mut self, scene: &Scene) {
         let transform = Transform2F::default();
 
         self.framebuffer_flags = FramebufferFlags::empty();

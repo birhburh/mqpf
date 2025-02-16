@@ -246,7 +246,7 @@ async fn main() {
             Vector2F::new(cursor_position.0, cursor_position.1),
             frame_start_elapsed_time,
         );
-        renderer.render(canvas_scene);
+        renderer.render(&canvas_scene);
 
         next_frame().await;
     }

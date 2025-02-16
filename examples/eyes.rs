@@ -150,7 +150,7 @@ async fn main() {
             &color_u8!(220, 110, 110, 255),
         );
 
-        renderer.render(canvas_scene);
+        renderer.render(&canvas_scene);
 
         next_frame().await;
     }

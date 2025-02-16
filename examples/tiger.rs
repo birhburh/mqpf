@@ -875,6 +875,11 @@ async fn main() {
 
     let tree = load_scene();
 
+    let mut canvas_scene = Scene {
+        view_box: RectF::new(vec2f(0.0, 0.0), vec2f(framebuffer_size.0, framebuffer_size.1)),
+        ..Default::default()
+    };
+
     loop {
         clear_background(DARKGRAY);
 
@@ -884,30 +889,29 @@ async fn main() {
 
             framebuffer_size = screen_size();
             renderer.update_viewport(framebuffer_size);
+
+            canvas_scene = Scene {
+                view_box: RectF::new(vec2f(0.0, 0.0), vec2f(framebuffer_size.0, framebuffer_size.1)),
+                ..Default::default()
+            };
+
+            let side_size = tree.size().width().min(tree.size().height());
+            let scale = if screen_width() < screen_height() {
+                framebuffer_size.0 / side_size * 0.9
+            } else {
+                framebuffer_size.1 / side_size * 0.9
+            };
+
+            let mut transform = Transform2F::from_translation(vec2f(
+                framebuffer_size.0 / 2.0 - side_size * scale / 2.0,
+                framebuffer_size.1 / 2.0 - side_size * scale / 2.0,
+            ));
+            transform *= Transform2F::from_scale(vec2f(scale, scale));
+
+            render_nodes(&tree.root(), &mut canvas_scene, transform);
         }
 
-        let mut canvas_scene = Scene {
-            view_box: RectF::new(vec2f(0.0, 0.0), vec2f(framebuffer_size.0, framebuffer_size.1)),
-            ..Default::default()
-        };
-        let transform = Transform2F::from_scale(hidpi_factor);
-
-        let side_size = tree.size().width().min(tree.size().height());
-        let mut scale = if screen_width() < screen_height() {
-            framebuffer_size.0 / side_size * 0.9
-        } else {
-            framebuffer_size.1 / side_size * 0.9
-        };
-
-        let mut transform = Transform2F::from_translation(vec2f(
-            framebuffer_size.0 / 2.0 - side_size * scale / 2.0,
-            framebuffer_size.1 / 2.0 - side_size * scale / 2.0,
-        ));
-        transform *= Transform2F::from_scale(vec2f(scale, scale));
-
-        render_nodes(&tree.root(), &mut canvas_scene, transform);
-
-        renderer.render(canvas_scene);
+        renderer.render(&canvas_scene);
 
         // break;
         next_frame().await;
