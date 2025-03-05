@@ -2,7 +2,7 @@ use {
     macroquad::{
         miniquad::{
             conf::{AppleGfxApi, Platform},
-            window::{dpi_scale, screen_size},
+            window::screen_size,
         },
         prelude::*,
     }, mqpf::{
@@ -865,7 +865,6 @@ fn render_nodes(group: &usvg::Group, scene: &mut Scene, global_transform: Transf
 #[macroquad::main(window_conf)]
 async fn main() {
     let mut framebuffer_size = screen_size();
-    let hidpi_factor = dpi_scale();
 
     let context = unsafe { get_internal_gl().quad_context };
     let mut renderer = Renderer::new(context, framebuffer_size, color_u8!(77, 77, 82, 255));

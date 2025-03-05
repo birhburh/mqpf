@@ -1115,7 +1115,7 @@ fn add_fill(
     segment: LineSegment2F,
     tile_coords: Vector2I,
 ) {
-    if tile_coords_to_local_index(built_path, tile_coords).is_none() {
+    if !built_path.tile_bounds.contains_point(tile_coords) {
         return;
     }
 
@@ -1147,21 +1147,12 @@ fn add_fill(
     });
 }
 
-#[inline]
-fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: Vector2I) -> Option<u32> {
-    if built_path.tile_bounds.contains_point(coords) {
-        Some(tile_coords_to_local_index_unchecked(built_path, coords))
-    } else {
-        None
-    }
-}
-
 fn get_or_allocate_alpha_tile_index(
     built_path: &mut BuiltPath,
     next_alpha_tile_index: &mut usize,
     tile_coords: Vector2I,
 ) -> AlphaTileId {
-    let local_tile_index = tile_coords_to_local_index_unchecked(built_path, tile_coords) as usize;
+    let local_tile_index = tile_coords_to_local_index(built_path, tile_coords) as usize;
 
     let tiles = &mut built_path.tiles;
 
@@ -1179,7 +1170,7 @@ fn get_or_allocate_alpha_tile_index(
 }
 
 #[inline]
-fn tile_coords_to_local_index_unchecked(built_path: &mut BuiltPath, coords: Vector2I) -> u32 {
+fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: Vector2I) -> u32 {
     let tile_rect = built_path.tile_bounds;
     let offset = coords - tile_rect.origin();
     (offset.x() + tile_rect.width() * offset.y()) as u32
