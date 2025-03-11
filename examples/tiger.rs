@@ -879,6 +879,7 @@ async fn main() {
         ..Default::default()
     };
 
+    let start_time = get_time();
     loop {
         clear_background(DARKGRAY);
 
@@ -912,7 +913,9 @@ async fn main() {
 
         renderer.render(&canvas_scene);
 
-        // break;
+        if get_time() - start_time > 10.0 {
+            break;
+        }
         next_frame().await;
     }
 }
