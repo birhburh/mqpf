@@ -28,6 +28,7 @@ fn window_conf() -> Conf {
             // blocking_event_loop: true,
             ..Default::default()
         },
+        // fullscreen: true,
         window_width,
         window_height,
         high_dpi,

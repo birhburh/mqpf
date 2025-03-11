@@ -21,12 +21,13 @@ fn window_conf() -> Conf {
     let window_width = 600;
     let window_height = window_width * 3 / 4;
     Conf {
-        window_title: format!("OUR BELOVED MASCOT").to_owned(),
+        window_title: format!("EYES").to_owned(),
         platform: Platform {
             apple_gfx_api,
             // blocking_event_loop: true,
             ..Default::default()
         },
+        // fullscreen: true,
         window_width,
         window_height,
         high_dpi,
@@ -152,6 +153,10 @@ async fn main() {
 
         renderer.render(&canvas_scene);
 
+
+        // if get_time() - start_time > 1.0 {
+        //     break;
+        // }
         next_frame().await;
     }
 }

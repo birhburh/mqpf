@@ -26,7 +26,7 @@ attribute vec2 aTileOffset;
 attribute vec2 aTileOrigin;
 attribute vec4 aMaskTexCoord0;
 attribute float aColor;
-attribute vec2 aCtrlBackdrop;
+attribute float aCtrlBackdrop;
 
 varying vec3 vMaskTexCoord0;
 varying vec4 vBaseColor;
@@ -41,7 +41,7 @@ void main() {
 
     vec2 maskTileCoord = vec2(aMaskTexCoord0.x, aMaskTexCoord0.y + 256.0 * aMaskTexCoord0.z);
     vec2 maskTexCoord0 = (vec2(maskTileCoord) + tileOffset) * uTileSize;
-    if (aCtrlBackdrop.y == 0.0 && aMaskTexCoord0.w != 0.0) {
+    if (aCtrlBackdrop == 0.0 && aMaskTexCoord0.w != 0.0) {
         gl_Position = vec4(0.0);
         return;
     }
@@ -51,6 +51,6 @@ void main() {
     vec4 baseColor       = fetchUnscaled(uTextureMetadata, metadataScale, metadataEntryCoord, 0.0);
     vBaseColor = baseColor;
 
-    vMaskTexCoord0 = vec3(maskTexCoord0, float(aCtrlBackdrop.y));
+    vMaskTexCoord0 = vec3(maskTexCoord0, float(aCtrlBackdrop));
     gl_Position = uTransform * vec4(position, 0.0, 1.0);
 }

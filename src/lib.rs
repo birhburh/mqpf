@@ -869,6 +869,10 @@ struct MaskStorage {
 #[repr(C)]
 struct AlphaTileId([f32; 4]);
 
+impl AlphaTileId {
+    const INVALID: AlphaTileId = AlphaTileId([255.0, 255.0, 255.0, 255.0]);
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 struct Tile {
@@ -876,7 +880,6 @@ struct Tile {
     tile_y: f32,
     alpha_tile_id: AlphaTileId,
     color: f32,
-    ctrl: f32,
     backdrop: f32,
 }
 
@@ -912,10 +915,9 @@ impl<'a> Tiler<'a> {
                 data.push(Tile {
                     tile_x: x as f32,
                     tile_y: y as f32,
-                    alpha_tile_id: AlphaTileId((!0u32).to_le_bytes().map(|v| v as f32)),
+                    alpha_tile_id: AlphaTileId::INVALID,
                     color: paint_id.0 as f32,
                     backdrop: 0.0,
-                    ctrl: 0.0,
                 });
             }
         }
@@ -1476,7 +1478,7 @@ impl<'a> Renderer<'a> {
                 VertexAttribute::with_buffer("aTileOrigin", VertexFormat::Float2, 1),
                 VertexAttribute::with_buffer("aMaskTexCoord0", VertexFormat::Float4, 1),
                 VertexAttribute::with_buffer("aColor", VertexFormat::Float1, 1),
-                VertexAttribute::with_buffer("aCtrlBackdrop", VertexFormat::Float2, 1),
+                VertexAttribute::with_buffer("aCtrlBackdrop", VertexFormat::Float1, 1),
             ],
             tile_shader,
             PipelineParams {
@@ -1532,7 +1534,6 @@ impl<'a> Renderer<'a> {
         let transform = Transform2F::default();
 
         self.framebuffer_flags = FramebufferFlags::empty();
-        // self.device.begin_commands();
         self.alpha_tile_count = 0;
 
         let mut next_alpha_tile_index = 0;
@@ -1563,7 +1564,7 @@ impl<'a> Renderer<'a> {
         let mut tiles = vec![];
         for cpu_data in &built_paths {
             for tile in &cpu_data.tiles {
-                if tile.alpha_tile_id == AlphaTileId((!0u32).to_le_bytes().map(|v| v as f32))
+                if tile.alpha_tile_id == AlphaTileId::INVALID
                     && tile.backdrop == 0.0
                 {
                     continue;
@@ -1574,9 +1575,6 @@ impl<'a> Renderer<'a> {
         }
 
         self.draw_tiles(&tiles);
-
-        // self.allocator.purge_if_needed();
-        // self.device.end_commands();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
