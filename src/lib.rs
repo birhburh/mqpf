@@ -63,7 +63,9 @@ const MASK_FRAMEBUFFER_HEIGHT: u32 = TILE_HEIGHT / 4 * MASK_TILES_DOWN;
 
 const MAX_FILLS_PER_BATCH: usize = 0x10000;
 
+#[cfg(feature = "svg")]
 const HAIRLINE_STROKE_WIDTH: f32 = 0.0333;
+#[cfg(feature = "svg")]
 const TOLERANCE: f32 = 0.01;
 
 #[repr(C)]
@@ -879,10 +881,10 @@ struct MaskStorage {
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 #[repr(C)]
-struct AlphaTileId([f32; 4]);
+struct AlphaTileId(f32);
 
 impl AlphaTileId {
-    const INVALID: AlphaTileId = AlphaTileId([255.0, 255.0, 255.0, 255.0]);
+    const INVALID: AlphaTileId = AlphaTileId(0xFFFFFF as u32 as f32);
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -890,7 +892,8 @@ impl AlphaTileId {
 struct Tile {
     tile_x: f32,
     tile_y: f32,
-    alpha_tile_id: AlphaTileId,
+    mask_tex_coord_0: AlphaTileId,
+    mask_tex_coord_1: AlphaTileId,
     color: f32,
     backdrop: f32,
 }
@@ -899,7 +902,6 @@ struct Tile {
 struct BuiltPath {
     backdrops: Vec<i32>,
     tiles: Vec<Tile>,
-    rect: RectI,
     tile_bounds: RectI,
 }
 
@@ -907,74 +909,6 @@ fn round_rect_out_to_tile_bounds(rect: RectF) -> RectI {
     (rect * vec2f(1.0 / TILE_WIDTH as f32, 1.0 / TILE_HEIGHT as f32))
         .round_out()
         .to_i32()
-}
-
-struct Tiler<'a> {
-    built_path: BuiltPath,
-    fills: Vec<Fill>,
-    nfills: usize,
-    outline: &'a Outline,
-}
-
-impl<'a> Tiler<'a> {
-    fn new(outline: &'a Outline, view_box: RectF, paint_id: PaintId) -> Tiler<'a> {
-        let bounds = outline.bounds.intersection(view_box).unwrap_or_default();
-        let tile_bounds = round_rect_out_to_tile_bounds(bounds);
-
-        let mut data =
-            Vec::with_capacity(tile_bounds.size().x() as usize * tile_bounds.size().y() as usize);
-        for y in tile_bounds.min_y()..tile_bounds.max_y() {
-            for x in tile_bounds.min_x()..tile_bounds.max_x() {
-                data.push(Tile {
-                    tile_x: x as f32,
-                    tile_y: y as f32,
-                    alpha_tile_id: AlphaTileId::INVALID,
-                    color: paint_id.0 as f32,
-                    backdrop: 0.0,
-                });
-            }
-        }
-
-        Tiler {
-            built_path: BuiltPath {
-                backdrops: vec![0; tile_bounds.width() as usize],
-                tiles: data,
-                rect: tile_bounds,
-                tile_bounds,
-            },
-            fills: vec![],
-            // fills: Vec::with_capacity(1000),
-            nfills: 0,
-            outline,
-        }
-    }
-
-    fn generate_fills(&mut self, view_box: RectF, next_alpha_tile_index: &mut usize) {
-        for contour in &self.outline.contours {
-            for segment in contour.iter() {
-                process_segment(
-                    &segment,
-                    view_box,
-                    next_alpha_tile_index,
-                    &mut self.fills,
-                    &mut self.built_path,
-                );
-            }
-        }
-    }
-
-    fn prepare_tiles(&mut self) {
-        let tiled_data = &mut self.built_path;
-        let (backdrops, tiles) = (&mut tiled_data.backdrops, &mut tiled_data.tiles);
-        let tiles_across = tiled_data.rect.width() as usize;
-        for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
-            let column = draw_tile_index % tiles_across;
-            let delta = draw_tile.backdrop as i32;
-            draw_tile.backdrop = backdrops[column] as f32;
-
-            backdrops[column] += delta;
-        }
-    }
 }
 
 fn process_segment(
@@ -1156,11 +1090,7 @@ fn add_fill(
             Vector2F::new(from_x as f32, from_y as f32),
             Vector2F::new(to_x as f32, to_y as f32),
         ),
-        link: {
-            let alpha_tile_index = u32::from_le_bytes(alpha_tile_id.0.map(|v| v as u8));
-            // dbg!(alpha_tile_index);
-            alpha_tile_index as f32
-        },
+        link: alpha_tile_id.0,
     });
 }
 
@@ -1173,16 +1103,14 @@ fn get_or_allocate_alpha_tile_index(
 
     let tiles = &mut built_path.tiles;
 
-    let alpha_tile_id = tiles[local_tile_index].alpha_tile_id;
-    if u32::from_le_bytes(alpha_tile_id.0.map(|v| v as u8)) < !0 {
-        return alpha_tile_id;
+    if tiles[local_tile_index].mask_tex_coord_1.0 as u32 & 0xFF != 0xFF {
+        return tiles[local_tile_index].mask_tex_coord_0;
     }
 
     *next_alpha_tile_index += 1;
-    let alpha_tile_index = *next_alpha_tile_index;
-    let bytes_as_vec4 = ((alpha_tile_index) as u32).to_le_bytes().map(|v| v as f32);
-    let new_alpha_tile_id = AlphaTileId(bytes_as_vec4);
-    tiles[local_tile_index].alpha_tile_id = new_alpha_tile_id;
+    let new_alpha_tile_id = AlphaTileId(*next_alpha_tile_index as f32);
+    tiles[local_tile_index].mask_tex_coord_0 = new_alpha_tile_id;
+    tiles[local_tile_index].mask_tex_coord_1 = AlphaTileId(0.0);
     new_alpha_tile_id
 }
 
@@ -1197,10 +1125,10 @@ fn tile_coords_to_local_index(built_path: &mut BuiltPath, coords: Vector2I) -> u
 fn adjust_alpha_tile_backdrop(built_path: &mut BuiltPath, tile_coords: Vector2I, delta: i8) {
     let (tiles, backdrops) = (&mut built_path.tiles, &mut built_path.backdrops);
 
-    let tile_offset = tile_coords - built_path.rect.origin();
+    let tile_offset = tile_coords - built_path.tile_bounds.origin();
     if tile_offset.x() < 0
-        || tile_offset.x() >= built_path.rect.width()
-        || tile_offset.y() >= built_path.rect.height()
+        || tile_offset.x() >= built_path.tile_bounds.width()
+        || tile_offset.y() >= built_path.tile_bounds.height()
     {
         return;
     }
@@ -1210,7 +1138,7 @@ fn adjust_alpha_tile_backdrop(built_path: &mut BuiltPath, tile_coords: Vector2I,
         return;
     }
 
-    let local_tile_index = coords_to_index_unchecked(built_path.rect, tile_coords);
+    let local_tile_index = coords_to_index_unchecked(built_path.tile_bounds, tile_coords);
     tiles[local_tile_index].backdrop += delta as f32;
 }
 
@@ -1491,7 +1419,8 @@ impl<'a> Renderer<'a> {
             &[
                 VertexAttribute::with_buffer("aTileOffset", VertexFormat::Float2, 0),
                 VertexAttribute::with_buffer("aTileOrigin", VertexFormat::Float2, 1),
-                VertexAttribute::with_buffer("aMaskTexCoord0", VertexFormat::Float4, 1),
+                VertexAttribute::with_buffer("aMaskTexCoord0", VertexFormat::Float1, 1),
+                VertexAttribute::with_buffer("aMaskTexCoord1", VertexFormat::Float1, 1),
                 VertexAttribute::with_buffer("aColor", VertexFormat::Float1, 1),
                 VertexAttribute::with_buffer("aCtrlBackdrop", VertexFormat::Float1, 1),
             ],
@@ -1563,15 +1492,59 @@ impl<'a> Renderer<'a> {
 
             let paint_id = path_object.paint_id;
 
-            let mut tiler = Tiler::new(&outline, scene.view_box, paint_id);
+            let bounds = outline.bounds.intersection(scene.view_box).unwrap_or_default();
+            let tile_bounds = round_rect_out_to_tile_bounds(bounds);
 
-            tiler.generate_fills(scene.view_box, &mut next_alpha_tile_index);
-            tiler.prepare_tiles();
-            if !tiler.fills.is_empty() {
-                self.add_fills(&tiler.fills, 0, tiler.fills.len());
+            let mut tiles =
+                Vec::with_capacity(tile_bounds.size().x() as usize * tile_bounds.size().y() as usize);
+            for y in tile_bounds.min_y()..tile_bounds.max_y() {
+                for x in tile_bounds.min_x()..tile_bounds.max_x() {
+                    tiles.push(Tile {
+                        tile_x: x as f32,
+                        tile_y: y as f32,
+                        mask_tex_coord_0: AlphaTileId::INVALID,
+                        mask_tex_coord_1: AlphaTileId::INVALID,
+                        color: paint_id.0 as f32,
+                        backdrop: 0.0,
+                    });
+                }
             }
 
-            built_paths.push(tiler.built_path);
+            let mut fills = Vec::with_capacity(1000);
+            let mut built_path = BuiltPath {
+                backdrops: vec![0; tile_bounds.width() as usize],
+                tiles,
+                tile_bounds,
+            };
+
+            for contour in &outline.contours {
+                for segment in contour.iter() {
+                    process_segment(
+                        &segment,
+                        scene.view_box,
+                        &mut next_alpha_tile_index,
+                        &mut fills,
+                        &mut built_path,
+                    );
+                }
+            }
+
+            let tiled_data = &mut built_path;
+            let (backdrops, tiles) = (&mut tiled_data.backdrops, &mut tiled_data.tiles);
+            let tiles_across = tiled_data.tile_bounds.width() as usize;
+            for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
+                let column = draw_tile_index % tiles_across;
+                let delta = draw_tile.backdrop as i32;
+                draw_tile.backdrop = backdrops[column] as f32;
+
+                backdrops[column] += delta;
+            }
+
+            if !fills.is_empty() {
+                self.add_fills(&fills, 0, fills.len());
+            }
+
+            built_paths.push(built_path);
         }
 
         self.flush_fills();
@@ -1579,7 +1552,7 @@ impl<'a> Renderer<'a> {
         let mut tiles = vec![];
         for cpu_data in &built_paths {
             for tile in &cpu_data.tiles {
-                if tile.alpha_tile_id == AlphaTileId::INVALID && tile.backdrop == 0.0 {
+                if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
                     continue;
                 }
 
@@ -1948,6 +1921,7 @@ impl LineCap {
     }
 }
 
+#[cfg(feature = "svg")]
 /// The shape used to join two line segments where they meet.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LineJoin {
@@ -1981,6 +1955,7 @@ impl LineJoin {
     }
 }
 
+#[cfg(feature = "svg")]
 struct DashState<'a> {
     output: Contour,
     dashes: &'a [f32],
@@ -1988,6 +1963,7 @@ struct DashState<'a> {
     distance_left: f32,
 }
 
+#[cfg(feature = "svg")]
 impl<'a> DashState<'a> {
     fn new(dashes: &'a [f32], mut offset: f32) -> DashState<'a> {
         let total: f32 = dashes.iter().cloned().sum();
@@ -2017,12 +1993,14 @@ impl<'a> DashState<'a> {
     }
 }
 
+#[cfg(feature = "svg")]
 struct ContourDash<'a, 'b, 'c> {
     input: &'a Contour,
     output: &'b mut Outline,
     state: &'c mut DashState<'a>,
 }
 
+#[cfg(feature = "svg")]
 impl<'a, 'b, 'c> ContourDash<'a, 'b, 'c> {
     fn new(
         input: &'a Contour,
@@ -2083,6 +2061,7 @@ impl<'a, 'b, 'c> ContourDash<'a, 'b, 'c> {
     }
 }
 
+#[cfg(feature = "svg")]
 /// Transforms a stroke into a dashed stroke.
 pub struct OutlineDash<'a> {
     input: &'a Outline,
@@ -2090,6 +2069,7 @@ pub struct OutlineDash<'a> {
     state: DashState<'a>,
 }
 
+#[cfg(feature = "svg")]
 impl<'a> OutlineDash<'a> {
     /// Creates a new outline dasher for the given stroke.
     ///
@@ -2131,6 +2111,7 @@ impl<'a> OutlineDash<'a> {
     }
 }
 
+#[cfg(feature = "svg")]
 /// How an outline should be stroked.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StrokeStyle {
@@ -2142,6 +2123,7 @@ pub struct StrokeStyle {
     pub line_join: LineJoin,
 }
 
+#[cfg(feature = "svg")]
 trait AddJoin {
     fn might_need_join(&self, join: LineJoin) -> bool;
     fn add_join(
@@ -2153,6 +2135,7 @@ trait AddJoin {
     );
 }
 
+#[cfg(feature = "svg")]
 impl AddJoin for Contour {
     fn might_need_join(&self, join: LineJoin) -> bool {
         if self.len() < 2 {
@@ -2206,6 +2189,7 @@ impl AddJoin for Contour {
     }
 }
 
+#[cfg(feature = "svg")]
 trait Offset {
     fn offset(&self, distance: f32, join: LineJoin, contour: &mut Contour);
     fn add_to_contour(
@@ -2219,6 +2203,7 @@ trait Offset {
     fn error_is_within_tolerance(&self, other: &Segment, distance: f32) -> bool;
 }
 
+#[cfg(feature = "svg")]
 impl Offset for Segment {
     fn offset(&self, distance: f32, join: LineJoin, contour: &mut Contour) {
         let join_point = self.baseline.from();
@@ -2358,6 +2343,7 @@ impl Offset for Segment {
     }
 }
 
+#[cfg(feature = "svg")]
 struct ContourStrokeToFill<'a> {
     input: &'a Contour,
     output: Contour,
@@ -2365,6 +2351,7 @@ struct ContourStrokeToFill<'a> {
     join: LineJoin,
 }
 
+#[cfg(feature = "svg")]
 impl<'a> ContourStrokeToFill<'a> {
     #[inline]
     fn new(input: &Contour, output: Contour, radius: f32, join: LineJoin) -> ContourStrokeToFill {
@@ -2409,12 +2396,14 @@ impl<'a> ContourStrokeToFill<'a> {
     }
 }
 
+#[cfg(feature = "svg")]
 pub struct OutlineStrokeToFill<'a> {
     input: &'a Outline,
     output: Outline,
     style: StrokeStyle,
 }
 
+#[cfg(feature = "svg")]
 impl<'a> OutlineStrokeToFill<'a> {
     /// Creates a new `OutlineStrokeToFill` object that will stroke the given outline with the
     /// given stroke style.

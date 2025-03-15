@@ -154,7 +154,7 @@ async fn main() {
         renderer.render(&canvas_scene);
 
         // if get_time() - start_time > 1.0 {
-        //     break;
+        // break;
         // }
         next_frame().await;
     }

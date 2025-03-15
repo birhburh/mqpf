@@ -24,7 +24,8 @@ uniform ivec2 uTextureMetadataSize;
 
 attribute vec2 aTileOffset;
 attribute vec2 aTileOrigin;
-attribute vec4 aMaskTexCoord0;
+attribute float aMaskTexCoord0;
+attribute float aMaskTexCoord1;
 attribute float aColor;
 attribute float aCtrlBackdrop;
 
@@ -39,9 +40,14 @@ void main() {
     vec2 tileOrigin = vec2(aTileOrigin), tileOffset = vec2(aTileOffset);
     vec2 position = (tileOrigin + tileOffset) * uTileSize;
 
-    vec2 maskTileCoord = vec2(aMaskTexCoord0.x, aMaskTexCoord0.y + 256.0 * aMaskTexCoord0.z);
+    int aMaskTexCoord0_w = int(mod(aMaskTexCoord1, 256.0));
+    int aMaskTexCoord0_z = int(mod(aMaskTexCoord0 / 65536.0, 256.0));
+    int aMaskTexCoord0_y = int(mod(aMaskTexCoord0 / 256.0, 256.0));
+    int aMaskTexCoord0_x = int(mod(aMaskTexCoord0, 256.0));
+
+    vec2 maskTileCoord = vec2(aMaskTexCoord0_x, aMaskTexCoord0_y + 256 * aMaskTexCoord0_z);
     vec2 maskTexCoord0 = (vec2(maskTileCoord) + tileOffset) * uTileSize;
-    if (aCtrlBackdrop == 0.0 && aMaskTexCoord0.w != 0.0) {
+    if (aCtrlBackdrop == 0.0 && aMaskTexCoord0_w != 0) {
         gl_Position = vec4(0.0);
         return;
     }
