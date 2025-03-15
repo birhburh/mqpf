@@ -11,3 +11,5 @@ assets/*.gif
 
 # ignore all lottie examples that I downloaded from lottie-rs without proper credit
 /*.json
+
+.vscode
