@@ -1294,12 +1294,17 @@ pub struct Renderer<'a> {
     _area_lut_texture: Texture2D,
     fill_pipeline: Pipeline,
     fill_bindings: Bindings,
+    mask_background_pipeline: Pipeline,
+    mask_background_bindings: Bindings,
     tile_pipeline: Pipeline,
     tile_bindings: Bindings,
     tiles_vertex_indices_buffer: Option<BufferId>,
     tiles_vertex_indices_length: usize,
     buffered_fills: Vec<Fill>,
     pending_fills: Vec<Fill>,
+    mask_background: bool,
+    mask_to_screen: bool,
+    tiles_to_screen: bool,
 }
 
 impl<'a> Renderer<'a> {
@@ -1400,6 +1405,40 @@ impl<'a> Renderer<'a> {
             },
         );
 
+        let mask_background_shader = ctx
+            .new_shader(
+                match ctx.info().backend {
+                    Backend::OpenGl => ShaderSource::Glsl {
+                        vertex: include_str!("../shaders/mask_background.vs.glsl"),
+                        fragment: include_str!("../shaders/mask_background.fs.glsl"),
+                    },
+                    Backend::Metal => todo!(),
+                },
+                ShaderMeta {
+                    images: vec!["uMaskTexture0".into()],
+                    uniforms: UniformBlockLayout {
+                        uniforms: vec![
+                            UniformDesc::new("uMaskTextureSize0", UniformType::Float2),
+                            UniformDesc::new("uTileSize", UniformType::Float2),
+                        ],
+                    },
+                },
+            )
+            .unwrap();
+
+        let mask_background_bindings = Bindings {
+            vertex_buffers: vec![quad_vertex_positions_buffer],
+            index_buffer: quad_vertex_indices_buffer,
+            images: vec![texture_metadata_texture],
+        };
+
+        let mask_background_pipeline = ctx.new_pipeline(
+            &[BufferLayout::default()],
+            &[VertexAttribute::new("in_pos", VertexFormat::Float2)],
+            mask_background_shader,
+            PipelineParams::default(),
+        );
+
         let tile_shader = ctx
             .new_shader(
                 match ctx.info().backend {
@@ -1487,11 +1526,17 @@ impl<'a> Renderer<'a> {
             fill_pipeline,
             fill_bindings,
 
+            mask_background_pipeline,
+            mask_background_bindings,
+
             tile_pipeline,
             tile_bindings,
 
             buffered_fills: vec![],
             pending_fills: vec![],
+            mask_to_screen: false,
+            mask_background: true,
+            tiles_to_screen: true,
         }
     }
 
@@ -1664,9 +1709,12 @@ impl<'a> Renderer<'a> {
             action = PassAction::clear_color(0.0, 0.0, 0.0, 0.0)
         };
 
-        self.ctx.begin_pass(Some(mask_storage.render_pass), action);
-        // self.ctx
-        //     .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
+        if self.mask_to_screen {
+            self.ctx
+                .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
+        } else {
+            self.ctx.begin_pass(Some(mask_storage.render_pass), action);
+        }
         self.ctx.apply_pipeline(&self.fill_pipeline);
         self.ctx.apply_bindings(&self.fill_bindings);
 
@@ -1680,10 +1728,29 @@ impl<'a> Renderer<'a> {
 
         self.framebuffer_flags
             .insert(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY);
+
+        if self.mask_background && !self.mask_to_screen {
+            self.ctx
+                .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
+            self.ctx.apply_pipeline(&self.mask_background_pipeline);
+            self.ctx.apply_bindings(&self.mask_background_bindings);
+
+            let texture_size = self.ctx.texture_size(mask_storage.mask_img);
+            self.ctx
+                .apply_uniforms(UniformsSource::table(&FillUniforms {
+                    framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
+                    tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
+                }));
+            self.ctx.draw(0, 6, 1);
+            self.ctx.end_render_pass();
+        }
     }
 
     fn draw_tiles(&mut self, tiles: &Vec<Tile>) {
         if tiles.is_empty() {
+            return;
+        }
+        if self.mask_to_screen || !self.tiles_to_screen {
             return;
         }
 
@@ -1697,13 +1764,13 @@ impl<'a> Renderer<'a> {
         self.ensure_index_buffer(tiles.len());
 
         let clear_color = self.background_color;
+        let mut action = PassAction::Nothing;
+        if !self.mask_background {
+            action =
+                PassAction::clear_color(clear_color.r, clear_color.g, clear_color.b, clear_color.a)
+        };
 
-        self.ctx.begin_default_pass(PassAction::clear_color(
-            clear_color.r,
-            clear_color.g,
-            clear_color.b,
-            clear_color.a,
-        ));
+        self.ctx.begin_default_pass(action);
         self.ctx.apply_pipeline(&self.tile_pipeline);
         self.ctx.apply_bindings(&self.tile_bindings);
 
@@ -1752,6 +1819,7 @@ impl<'a> Renderer<'a> {
             allocated_page_count: alpha_tile_pages_needed,
         });
         self.tile_bindings.images[1] = mask_img;
+        self.mask_background_bindings.images[0] = mask_img;
     }
 
     fn mask_viewport(&self) -> RectI {

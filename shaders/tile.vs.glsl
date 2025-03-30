@@ -32,8 +32,8 @@ attribute float aCtrlBackdrop;
 varying vec3 vMaskTexCoord0;
 varying vec4 vBaseColor;
 
-vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord, float entry) {
-    return texture2D(srcTexture, (originCoord + vec2(0.5) + vec2(entry, 0)) * scale);
+vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord) {
+    return texture2D(srcTexture, (originCoord + vec2(0.5)) * scale);
 }
 
 void main() {
@@ -54,7 +54,7 @@ void main() {
 
     vec2 metadataScale = vec2(1.0) / vec2(uTextureMetadataSize);
     vec2 metadataEntryCoord = vec2(mod(aColor, 128.0), aColor / 128.0);
-    vec4 baseColor       = fetchUnscaled(uTextureMetadata, metadataScale, metadataEntryCoord, 0.0);
+    vec4 baseColor       = fetchUnscaled(uTextureMetadata, metadataScale, metadataEntryCoord);
     vBaseColor = baseColor;
 
     vMaskTexCoord0 = vec3(maskTexCoord0, float(aCtrlBackdrop));

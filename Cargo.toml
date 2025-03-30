@@ -6,11 +6,7 @@ description = "Path renderer for macroquad based on pathfinder code"
 license = "MIT"
 repository = "https://github.com/birhburh/mqpf"
 
-[package.metadata.android]
-label = "MQPF EXAMPLE"
-min_sdk_version = 26
-target_sdk_version = 28
-build_targets = ["aarch64-linux-android"]
+build = "build/main.rs"
 
 [features]
 svg = ["usvg"]
@@ -21,12 +17,18 @@ name = "tiger"
 required-features = ["svg"]
 
 [dependencies]
-# macroquad = { path = "../macroquad" }
-macroquad = { version = "0.4.13", git = "https://github.com/not-fl3/macroquad", rev = "b6f43bb868e776540ef8ebebd10299f1aac1c06c"}
+macroquad = { version = "=0.4.14" }
 bitflags = "1.0"
-pathfinder_geometry = "0.5.1"
-pathfinder_simd = "0.5.4"
-usvg = { version = "0.44.0", optional = true }
+pathfinder_geometry = "=0.5.1"
+pathfinder_simd = "=0.5.4"
+usvg = { version = "=0.44.0", optional = true }
 
-[patch.crates-io]
-miniquad = { version = "0.4.7", git = "https://github.com/not-fl3/miniquad", rev = "ec99dab891d21bc664957afdc3e743942b7c4926" }
+[build-dependencies]
+euclid = "0.20"
+image = "0.23"
+
+[package.metadata.android]
+label = "MQPF EXAMPLE"
+min_sdk_version = 26
+target_sdk_version = 28
+build_targets = ["aarch64-linux-android"]
