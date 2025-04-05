@@ -67,6 +67,7 @@ vec4 calculateColor(sampler2D maskTexture0,
                     vec2 maskTextureSize0,
                     vec3 maskTexCoord0,
                     vec4 baseColor) {
+    // return vec4((vec2(floor(floor(maskTexCoord0.xy) / vec2(1, 4))) + 0.5) / maskTextureSize0 * 5.0, 0.5, 1.0);
     // Sample mask.
     float maskAlpha = 1.0;
     maskAlpha = sampleMask(maskAlpha, maskTexture0, maskTextureSize0, maskTexCoord0);

@@ -57,6 +57,8 @@ const FLATTENING_TOLERANCE: f32 = 0.25;
 
 const MASK_TILES_ACROSS: u32 = 256;
 const MASK_TILES_DOWN: u32 = 256;
+// const MASK_TILES_ACROSS: u32 = 32;
+// const MASK_TILES_DOWN: u32 = 256;
 
 const MASK_FRAMEBUFFER_WIDTH: u32 = TILE_WIDTH * MASK_TILES_ACROSS;
 const MASK_FRAMEBUFFER_HEIGHT: u32 = TILE_HEIGHT / 4 * MASK_TILES_DOWN;
@@ -1141,6 +1143,7 @@ fn get_or_allocate_alpha_tile_index(
     *next_alpha_tile_index += 1;
     let new_alpha_tile_id = AlphaTileId(*next_alpha_tile_index as f32);
     tiles[local_tile_index].mask_tex_coord_0 = new_alpha_tile_id;
+    // tiles[local_tile_index].mask_tex_coord_0 = AlphaTileId(15.0);
     tiles[local_tile_index].mask_tex_coord_1 = AlphaTileId(0.0);
     new_alpha_tile_id
 }
@@ -1302,6 +1305,7 @@ pub struct Renderer<'a> {
     tiles_vertex_indices_length: usize,
     buffered_fills: Vec<Fill>,
     pending_fills: Vec<Fill>,
+    all_tiles: Vec<Tile>,
     mask_background: bool,
     mask_to_screen: bool,
     tiles_to_screen: bool,
@@ -1534,8 +1538,11 @@ impl<'a> Renderer<'a> {
 
             buffered_fills: vec![],
             pending_fills: vec![],
+            all_tiles: vec![],
+
+            // mask_to_screen: true,
             mask_to_screen: false,
-            mask_background: true,
+            mask_background: false,
             tiles_to_screen: true,
         }
     }
@@ -1549,86 +1556,97 @@ impl<'a> Renderer<'a> {
 
     pub fn render(&mut self, scene: &Scene) {
         let transform = Transform2F::default();
+        // println!("RENDER:");
 
-        self.framebuffer_flags = FramebufferFlags::empty();
+        // self.framebuffer_flags = FramebufferFlags::empty();
+        // self.framebuffer_flags = FramebufferFlags::empty();
         self.alpha_tile_count = 0;
 
         let mut next_alpha_tile_index = 0;
 
-        let palette = scene.colors.clone();
-        self.upload_palette(&palette);
-        let mut all_tiles = vec![];
+        if !self
+            .framebuffer_flags
+            .contains(FramebufferFlags::DEST_FRAMEBUFFER_IS_DIRTY)
+        {
+            let palette = scene.colors.clone();
+            self.upload_palette(&palette);
+        }
 
-        let mut tiles = Vec::with_capacity(1000);
-        for path_object in &scene.paths {
-            let mut outline = path_object.outline.clone();
-            outline.close_all_contours();
-            outline.transform(&transform);
+        if !self
+            .framebuffer_flags
+            .contains(FramebufferFlags::DEST_FRAMEBUFFER_IS_DIRTY)
+        {
+            let mut tiles = Vec::with_capacity(1000);
+            for path_object in &scene.paths {
+                let mut outline = path_object.outline.clone();
+                outline.close_all_contours();
+                outline.transform(&transform);
 
-            let bounds = outline
-                .bounds
-                .intersection(scene.view_box)
-                .unwrap_or_default();
-            let path_tile_bounds = round_rect_out_to_tile_bounds(bounds);
+                let bounds = outline
+                    .bounds
+                    .intersection(scene.view_box)
+                    .unwrap_or_default();
+                let path_tile_bounds = round_rect_out_to_tile_bounds(bounds);
 
-            for y in path_tile_bounds.min_y()..path_tile_bounds.max_y() {
-                for x in path_tile_bounds.min_x()..path_tile_bounds.max_x() {
-                    tiles.push(Tile {
-                        tile_x: x as f32,
-                        tile_y: y as f32,
-                        mask_tex_coord_0: AlphaTileId::INVALID,
-                        mask_tex_coord_1: AlphaTileId::INVALID,
-                        color: path_object.paint_id.0 as f32,
-                        backdrop: 0.0,
-                    });
-                }
-            }
-
-            let mut fills = Vec::with_capacity(
-                path_tile_bounds.size().x() as usize * path_tile_bounds.size().y() as usize,
-            );
-            let mut backdrops = vec![0; path_tile_bounds.width() as usize];
-
-            for contour in &outline.contours {
-                for segment in contour.iter() {
-                    process_segment(
-                        &segment,
-                        scene.view_box,
-                        &mut next_alpha_tile_index,
-                        &mut fills,
-                        &mut backdrops,
-                        &mut tiles,
-                        &path_tile_bounds,
-                    );
-                }
-            }
-
-            let tiles_across = path_tile_bounds.width() as usize;
-            for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
-                let column = draw_tile_index % tiles_across;
-                let delta = draw_tile.backdrop as i32;
-                draw_tile.backdrop = backdrops[column] as f32;
-
-                backdrops[column] += delta;
-            }
-
-            if !fills.is_empty() {
-                self.add_fills(&fills, 0, fills.len());
-            }
-
-            for tile in &tiles {
-                if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
-                    continue;
+                for y in path_tile_bounds.min_y()..path_tile_bounds.max_y() {
+                    for x in path_tile_bounds.min_x()..path_tile_bounds.max_x() {
+                        tiles.push(Tile {
+                            tile_x: x as f32,
+                            tile_y: y as f32,
+                            mask_tex_coord_0: AlphaTileId::INVALID,
+                            mask_tex_coord_1: AlphaTileId::INVALID,
+                            color: path_object.paint_id.0 as f32,
+                            backdrop: 0.0,
+                        });
+                    }
                 }
 
-                all_tiles.push(*tile);
+                let mut fills = Vec::with_capacity(
+                    path_tile_bounds.size().x() as usize * path_tile_bounds.size().y() as usize,
+                );
+                let mut backdrops = vec![0; path_tile_bounds.width() as usize];
+
+                for contour in &outline.contours {
+                    for segment in contour.iter() {
+                        process_segment(
+                            &segment,
+                            scene.view_box,
+                            &mut next_alpha_tile_index,
+                            &mut fills,
+                            &mut backdrops,
+                            &mut tiles,
+                            &path_tile_bounds,
+                        );
+                    }
+                }
+
+                let tiles_across = path_tile_bounds.width() as usize;
+                for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
+                    let column = draw_tile_index % tiles_across;
+                    let delta = draw_tile.backdrop as i32;
+                    draw_tile.backdrop = backdrops[column] as f32;
+
+                    backdrops[column] += delta;
+                }
+
+                if !fills.is_empty() {
+                    self.add_fills(&fills, 0, fills.len());
+                }
+
+                for tile in &tiles {
+                    if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
+                        continue;
+                    }
+
+                    self.all_tiles.push(*tile);
+                }
+                tiles.resize(0, Tile::default());
             }
-            tiles.resize(0, Tile::default());
         }
 
         self.flush_fills();
 
-        self.draw_tiles(&all_tiles);
+        self.draw_tiles();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
@@ -1675,6 +1693,13 @@ impl<'a> Renderer<'a> {
         if self.buffered_fills.is_empty() {
             return;
         }
+        if self
+            .framebuffer_flags
+            .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
+        {
+            return;
+        }
+        println!("FLUSH FILLS!");
 
         debug_assert!(!self.buffered_fills.is_empty());
         debug_assert!(self.buffered_fills.len() <= u32::MAX as usize);
@@ -1707,7 +1732,11 @@ impl<'a> Renderer<'a> {
             .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
         {
             action = PassAction::clear_color(0.0, 0.0, 0.0, 0.0)
-        };
+        // }
+        } else {
+            return;
+        }
+        println!("DRAW FILLS!");
 
         if self.mask_to_screen {
             self.ctx
@@ -1746,22 +1775,27 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn draw_tiles(&mut self, tiles: &Vec<Tile>) {
-        if tiles.is_empty() {
+    fn draw_tiles(&mut self) {
+        if self.all_tiles.is_empty() {
             return;
         }
         if self.mask_to_screen || !self.tiles_to_screen {
             return;
         }
 
-        let old_tile_vertex_buffer_id = self.tile_bindings.vertex_buffers[1];
-        self.tile_bindings.vertex_buffers[1] = self.ctx.new_buffer(
-            BufferType::VertexBuffer,
-            BufferUsage::Immutable,
-            BufferSource::slice(&tiles),
-        );
+        if !self
+            .framebuffer_flags
+            .contains(FramebufferFlags::DEST_FRAMEBUFFER_IS_DIRTY)
+        {
+            println!("SET TILES BUFFER!");
+            self.tile_bindings.vertex_buffers[1] = self.ctx.new_buffer(
+                BufferType::VertexBuffer,
+                BufferUsage::Immutable,
+                BufferSource::slice(&self.all_tiles),
+            );
+        }
 
-        self.ensure_index_buffer(tiles.len());
+        self.ensure_index_buffer(self.all_tiles.len());
 
         let clear_color = self.background_color;
         let mut action = PassAction::Nothing;
@@ -1791,11 +1825,14 @@ impl<'a> Renderer<'a> {
                 ],
                 mask_texture_size0: [texture_size.0 as f32, texture_size.1 as f32],
             }));
-        self.ctx.draw(0, 6, tiles.len().try_into().unwrap());
+        self.ctx.draw(0, 6, self.all_tiles.len().try_into().unwrap());
         self.ctx.end_render_pass();
 
-        self.ctx.delete_buffer(self.tile_bindings.vertex_buffers[1]);
-        self.tile_bindings.vertex_buffers[1] = old_tile_vertex_buffer_id;
+        // self.ctx.delete_buffer(self.tile_bindings.vertex_buffers[1]);
+        // self.tile_bindings.vertex_buffers[1] = old_tile_vertex_buffer_id;
+
+        self.framebuffer_flags
+            .insert(FramebufferFlags::DEST_FRAMEBUFFER_IS_DIRTY);
     }
 
     fn reallocate_alpha_tile_pages_if_necessary(&mut self) {
@@ -1810,6 +1847,8 @@ impl<'a> Renderer<'a> {
             width: MASK_FRAMEBUFFER_WIDTH,
             height: MASK_FRAMEBUFFER_HEIGHT * alpha_tile_pages_needed,
             format: TextureFormat::RGBA16F,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
             ..Default::default()
         });
 

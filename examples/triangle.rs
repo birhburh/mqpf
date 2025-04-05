@@ -6,7 +6,7 @@ use {
         },
         prelude::*,
     },
-    mqpf::{push_path, Path2D, Renderer, Scene, PI_2},
+    mqpf::{push_path, Path2D, Renderer, Scene},
     pathfinder_geometry::{
         rect::RectF,
         transform2d::Transform2F,
@@ -20,7 +20,7 @@ fn window_conf() -> Conf {
     let window_width = 600;
     let window_height = window_width * 3 / 4;
     Conf {
-        window_title: format!("ELLIPSE").to_owned(),
+        window_title: format!("TRIANGLE").to_owned(),
         platform: Platform {
             apple_gfx_api,
             ..Default::default()
@@ -68,7 +68,10 @@ async fn main() {
                 ..Default::default()
             };
             let mut path = Path2D::new();
-            path.ellipse(vec2f(180.0, 250.0), vec2f(160.0, 230.0), 0.0, 0.0, PI_2);
+            // path.ellipse(vec2f(180.0, 250.0), vec2f(160.0, 230.0), 0.0, 0.0, PI_2);
+            path.move_to(vec2f(30.0, 30.0));
+            path.line_to(vec2f(100.0, 100.0));
+            path.line_to(vec2f(100.0, 30.0));
             push_path(
                 &mut canvas_scene,
                 &Transform2F::default(),
