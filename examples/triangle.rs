@@ -60,8 +60,7 @@ async fn main() {
         // path.line_to(vec2f(100.0, 30.0));
         if elapsed_time < 5.0 {
             path.line_to(vec2f(100.0 + elapsed_time as f32 * 10.0, 30.0));
-        }
-        else {
+        } else {
             path.line_to(vec2f(150.0, 30.0));
         }
 
@@ -90,12 +89,24 @@ async fn main() {
             &color_u8!(110, 110, 12, 255),
         );
 
+        let path = renderer.begin_path(hash!());
+
+        path.move_to(vec2f(350.0, 30.0));
+        path.quadratic_curve_to(vec2f(430.0, 30.0), vec2f(430.0, 80.0));
+
+        let path_id = path.id;
+        renderer.fill_path(
+            &Transform2F::default(),
+            path_id,
+            &color_u8!(180, 255, 180, 255),
+        );
+
         renderer.render();
 
         dbg!(elapsed_time);
         if elapsed_time > 0.25 {
-        // if elapsed_time > 5.0 {
-            break;
+            // if elapsed_time > 5.0 {
+            // break;
         }
         next_frame().await;
     }

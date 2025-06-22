@@ -3,9 +3,6 @@
 #[macro_use]
 extern crate bitflags;
 
-#[cfg(feature = "svg")]
-pub mod svg;
-
 use {
     macroquad::{
         miniquad::{
@@ -54,8 +51,6 @@ const MASK_TILES_DOWN: u32 = 256;
 
 const MASK_FRAMEBUFFER_WIDTH: u32 = TILE_WIDTH * MASK_TILES_ACROSS;
 const MASK_FRAMEBUFFER_HEIGHT: u32 = TILE_HEIGHT / 4 * MASK_TILES_DOWN;
-
-const MAX_FILLS_PER_BATCH: usize = 0x10000;
 
 #[repr(C)]
 pub struct FillUniforms {
@@ -166,55 +161,6 @@ impl Path2D {
             self.contours[self.current_contour as usize].close();
         }
     }
-
-    // #[inline]
-    // pub fn from_segments<I>(segments: I) -> Outline
-    // where
-    //     I: Iterator<Item = Segment>,
-    // {
-    //     let mut outline = Outline::new();
-    //     let mut current_contour = Contour::new();
-
-    //     for segment in segments {
-    //         if segment.flags.contains(SegmentFlags::FIRST_IN_SUBPATH) {
-    //             if !current_contour.is_empty() {
-    //                 outline
-    //                     .contours
-    //                     .push(mem::replace(&mut current_contour, Contour::new()));
-    //             }
-    //             current_contour.push_point(segment.baseline.from(), PointFlags::empty(), true);
-    //         }
-
-    //         if segment.flags.contains(SegmentFlags::CLOSES_SUBPATH) {
-    //             if !current_contour.is_empty() {
-    //                 current_contour.close();
-    //                 let contour = mem::replace(&mut current_contour, Contour::new());
-    //                 outline.push_contour(contour);
-    //             }
-    //             continue;
-    //         }
-
-    //         if segment.is_none() {
-    //             continue;
-    //         }
-
-    //         if !segment.is_line() {
-    //             current_contour.push_point(segment.ctrl.from(), PointFlags::CONTROL_POINT_0, true);
-    //             if !segment.is_quadratic() {
-    //                 current_contour.push_point(
-    //                     segment.ctrl.to(),
-    //                     PointFlags::CONTROL_POINT_1,
-    //                     true,
-    //                 );
-    //             }
-    //         }
-
-    //         current_contour.push_point(segment.baseline.to(), PointFlags::empty(), true);
-    //     }
-
-    //     outline.push_contour(current_contour);
-    //     outline
-    // }
 
     pub fn next_contour(&mut self) {
         if self.current_contour >= 0 {
@@ -877,18 +823,6 @@ struct Fill {
     link: f32,
 }
 
-bitflags! {
-    struct FramebufferFlags: u8 {
-        const MASK_FRAMEBUFFER_IS_DIRTY = 0x01;
-    }
-}
-
-struct MaskStorage {
-    mask_img: TextureId,
-    render_pass: miniquad::RenderPass,
-    allocated_page_count: u32,
-}
-
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 #[repr(C)]
 struct AlphaTileId(f32);
@@ -902,8 +836,7 @@ impl AlphaTileId {
 struct Tile {
     tile_x: f32,
     tile_y: f32,
-    mask_tex_coord_0: AlphaTileId,
-    mask_tex_coord_1: AlphaTileId,
+    mask_tex_coord: AlphaTileId,
     color: f32,
     backdrop: f32,
 }
@@ -1144,14 +1077,13 @@ fn get_or_allocate_alpha_tile_index(
     let offset = tile_coords - path_tile_bounds.origin();
     let local_tile_index = (offset.x() + path_tile_bounds.width() * offset.y()) as usize;
 
-    if tiles[local_tile_index].mask_tex_coord_1.0 as u32 & 0xFF != 0xFF {
-        return tiles[local_tile_index].mask_tex_coord_0;
+    if tiles[local_tile_index].mask_tex_coord != AlphaTileId::INVALID {
+        return tiles[local_tile_index].mask_tex_coord;
     }
 
     *next_alpha_tile_index += 1;
     let new_alpha_tile_id = AlphaTileId(*next_alpha_tile_index as f32);
-    tiles[local_tile_index].mask_tex_coord_0 = new_alpha_tile_id;
-    tiles[local_tile_index].mask_tex_coord_1 = AlphaTileId(0.0);
+    tiles[local_tile_index].mask_tex_coord = new_alpha_tile_id;
     new_alpha_tile_id
 }
 
@@ -1303,10 +1235,11 @@ pub struct Renderer<'a> {
     retained_paths: HashMap<Id, Path2D>,
 
     texture_metadata_texture: TextureId,
-    mask_storage: Option<MaskStorage>,
-    alpha_tile_count: u32,
-    framebuffer_flags: FramebufferFlags,
     _area_lut_texture: Texture2D,
+
+    mask_img: TextureId,
+    mask_render_pass: miniquad::RenderPass,
+
     fill_pipeline: Pipeline,
     fill_bindings: Bindings,
     mask_background_pipeline: Pipeline,
@@ -1315,9 +1248,9 @@ pub struct Renderer<'a> {
     tile_bindings: Bindings,
     tiles_vertex_indices_buffer: Option<BufferId>,
     tiles_vertex_indices_length: usize,
-    buffered_fills: Vec<Fill>,
-    pending_fills: Vec<Fill>,
-    all_tiles: Vec<Tile>,
+
+    fills: Vec<Fill>,
+    tiles: Vec<Tile>,
 
     mask_background: bool,
     mask_to_screen: bool,
@@ -1326,10 +1259,7 @@ pub struct Renderer<'a> {
 
 impl<'a> Renderer<'a> {
     /// Creates a new renderer ready to render content
-    pub fn new(
-        ctx: &'a mut dyn RenderingBackend,
-        framebuffer_size: (f32, f32),
-    ) -> Renderer<'a> {
+    pub fn new(ctx: &'a mut dyn RenderingBackend, framebuffer_size: (f32, f32)) -> Renderer<'a> {
         let viewport = RectF::new(
             vec2f(0.0, 0.0),
             vec2f(framebuffer_size.0, framebuffer_size.1),
@@ -1421,6 +1351,17 @@ impl<'a> Renderer<'a> {
             },
         );
 
+        let mask_img = ctx.new_render_texture(TextureParams {
+            width: MASK_FRAMEBUFFER_WIDTH,
+            height: MASK_FRAMEBUFFER_HEIGHT,
+            format: TextureFormat::RGBA16F,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let mask_render_pass = ctx.new_render_pass(mask_img, None);
+
         let mask_background_shader = ctx
             .new_shader(
                 match ctx.info().backend {
@@ -1445,7 +1386,7 @@ impl<'a> Renderer<'a> {
         let mask_background_bindings = Bindings {
             vertex_buffers: vec![quad_vertex_positions_buffer],
             index_buffer: quad_vertex_indices_buffer,
-            images: vec![texture_metadata_texture],
+            images: vec![mask_img],
         };
 
         let mask_background_pipeline = ctx.new_pipeline(
@@ -1487,7 +1428,7 @@ impl<'a> Renderer<'a> {
         let tile_bindings = Bindings {
             vertex_buffers: vec![quad_vertex_positions_buffer, tile_vertex_buffer],
             index_buffer: quad_vertex_indices_buffer,
-            images: vec![texture_metadata_texture, texture_metadata_texture],
+            images: vec![texture_metadata_texture, mask_img],
         };
 
         let tile_pipeline = ctx.new_pipeline(
@@ -1502,8 +1443,7 @@ impl<'a> Renderer<'a> {
             &[
                 VertexAttribute::with_buffer("aTileOffset", VertexFormat::Float2, 0),
                 VertexAttribute::with_buffer("aTileOrigin", VertexFormat::Float2, 1),
-                VertexAttribute::with_buffer("aMaskTexCoord0", VertexFormat::Float1, 1),
-                VertexAttribute::with_buffer("aMaskTexCoord1", VertexFormat::Float1, 1),
+                VertexAttribute::with_buffer("aMaskTexCoord", VertexFormat::Float1, 1),
                 VertexAttribute::with_buffer("aColor", VertexFormat::Float1, 1),
                 VertexAttribute::with_buffer("aCtrlBackdrop", VertexFormat::Float1, 1),
             ],
@@ -1538,23 +1478,18 @@ impl<'a> Renderer<'a> {
             tiles_vertex_indices_length: 0,
 
             texture_metadata_texture,
-            mask_storage: None,
-            alpha_tile_count: 0,
-            framebuffer_flags: FramebufferFlags::empty(),
-
+            mask_img,
+            mask_render_pass,
             _area_lut_texture: area_lut_texture,
             fill_pipeline,
             fill_bindings,
-
             mask_background_pipeline,
             mask_background_bindings,
-
             tile_pipeline,
             tile_bindings,
 
-            buffered_fills: vec![],
-            pending_fills: vec![],
-            all_tiles: vec![],
+            fills: vec![],
+            tiles: vec![],
 
             mask_to_screen: false,
             mask_background: true,
@@ -1616,20 +1551,19 @@ impl<'a> Renderer<'a> {
     pub fn render(&mut self) {
         let transform = Transform2F::default();
 
-        self.framebuffer_flags = FramebufferFlags::empty();
-        self.alpha_tile_count = 0;
-
         let mut next_alpha_tile_index = 0;
 
         let palette = self.colors.clone();
         self.upload_palette(&palette);
 
         let mut tiles = Vec::with_capacity(1000);
-        let mut all_fills = Vec::with_capacity(1000);
-        let changed = self.retained_paths.iter().any(|(_, p)| p.contours.iter().any(|c| c.changed));
+        let changed = self
+            .retained_paths
+            .iter()
+            .any(|(_, p)| p.contours.iter().any(|c| c.changed));
         dbg!(changed);
         if changed {
-            self.all_tiles.clear();
+            self.tiles.clear();
         }
         for scene_path in &self.paths {
             dbg!(scene_path.path_id);
@@ -1645,8 +1579,7 @@ impl<'a> Renderer<'a> {
                         tiles.push(Tile {
                             tile_x: x as f32,
                             tile_y: y as f32,
-                            mask_tex_coord_0: AlphaTileId::INVALID,
-                            mask_tex_coord_1: AlphaTileId::INVALID,
+                            mask_tex_coord: AlphaTileId::INVALID,
                             color: scene_path.paint_id.0 as f32,
                             backdrop: 0.0,
                         });
@@ -1685,41 +1618,35 @@ impl<'a> Renderer<'a> {
                 }
 
                 if !fills.is_empty() {
-                    all_fills.append(&mut fills);
+                    self.fills.append(&mut fills);
                 }
                 for tile in &tiles {
-                    if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
+                    if tile.mask_tex_coord == AlphaTileId::INVALID && tile.backdrop == 0.0 {
                         continue;
                     }
 
-                    self.all_tiles.push(*tile);
+                    self.tiles.push(*tile);
                 }
                 tiles.resize(0, Tile::default());
             }
         }
 
-        if !all_fills.is_empty() {
-            self.add_fills(&all_fills, 0, all_fills.len());
-        }
-
-        self.flush_fills();
+        self.draw_fills();
 
         if self.mask_background && !self.mask_to_screen {
-            if let Some(mask_storage) = self.mask_storage.as_ref() {
-                self.ctx
-                    .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
-                self.ctx.apply_pipeline(&self.mask_background_pipeline);
-                self.ctx.apply_bindings(&self.mask_background_bindings);
+            self.ctx
+                .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
+            self.ctx.apply_pipeline(&self.mask_background_pipeline);
+            self.ctx.apply_bindings(&self.mask_background_bindings);
 
-                let texture_size = self.ctx.texture_size(mask_storage.mask_img);
-                self.ctx
-                    .apply_uniforms(UniformsSource::table(&FillUniforms {
-                        framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
-                        tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
-                    }));
-                self.ctx.draw(0, 6, 1);
-                self.ctx.end_render_pass();
-            }
+            let texture_size = self.ctx.texture_size(self.mask_img);
+            self.ctx
+                .apply_uniforms(UniformsSource::table(&FillUniforms {
+                    framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
+                    tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
+                }));
+            self.ctx.draw(0, 6, 1);
+            self.ctx.end_render_pass();
         }
 
         self.draw_tiles();
@@ -1745,102 +1672,55 @@ impl<'a> Renderer<'a> {
             .texture_resize(self.texture_metadata_texture, width, height, Some(&texels));
     }
 
-    fn add_fills(&mut self, added_fills: &[Fill], first_el: usize, last_el: usize) {
-        if added_fills.is_empty() {
+    fn draw_fills(&mut self) {
+        if self.fills.is_empty() {
             return;
         }
-        println!("ADD FILLS!");
-
-        self.pending_fills.reserve(last_el - first_el);
-        for fill in &added_fills[first_el..last_el] {
-            self.alpha_tile_count = self.alpha_tile_count.max(fill.link as u32 + 1);
-            self.pending_fills.push(*fill);
-        }
-
-        self.reallocate_alpha_tile_pages_if_necessary();
-
-        if self.buffered_fills.len() + self.pending_fills.len() > MAX_FILLS_PER_BATCH {
-            self.flush_fills();
-        }
-
-        self.buffered_fills.append(&mut self.pending_fills);
-    }
-
-    fn flush_fills(&mut self) {
-        if self.buffered_fills.is_empty() {
-            return;
-        }
-        // if self
-        //     .framebuffer_flags
-        //     .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
-        // {
-        //     return;
-        // }
-        println!("FLUSH FILLS!");
-
-        debug_assert!(!self.buffered_fills.is_empty());
-        debug_assert!(self.buffered_fills.len() <= u32::MAX as usize);
 
         let old_fill_buffer = self.fill_bindings.vertex_buffers[1];
         self.fill_bindings.vertex_buffers[1] = self.ctx.new_buffer(
             BufferType::VertexBuffer,
             BufferUsage::Dynamic,
-            BufferSource::slice(&self.buffered_fills),
+            BufferSource::slice(&self.fills),
         );
 
-        let fill_count = self.buffered_fills.len() as u32;
-        self.buffered_fills.clear();
+        let fill_count = self.fills.len() as u32;
+        self.fills.clear();
 
-        self.draw_fills(fill_count);
-        self.ctx.delete_buffer(self.fill_bindings.vertex_buffers[1]);
-        self.fill_bindings.vertex_buffers[1] = old_fill_buffer;
-    }
-
-    fn draw_fills(&mut self, fill_count: u32) {
-        let mask_viewport = self.mask_viewport().size().to_f32().0;
-        let mask_storage = self
-            .mask_storage
-            .as_ref()
-            .expect("Where's the mask storage?");
-
-        let mut action = PassAction::Nothing;
-        if !self
-            .framebuffer_flags
-            .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
-        {
-            action = PassAction::clear_color(0.0, 0.0, 0.0, 0.0);
-        }
         println!("DRAW FILLS!");
 
         if self.mask_to_screen {
             self.ctx
                 .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
         } else {
-            self.ctx.begin_pass(Some(mask_storage.render_pass), action);
+            self.ctx.begin_pass(Some(self.mask_render_pass), PassAction::clear_color(0.0, 0.0, 0.0, 0.0));
         }
         self.ctx.apply_pipeline(&self.fill_pipeline);
         self.ctx.apply_bindings(&self.fill_bindings);
 
         self.ctx
             .apply_uniforms(UniformsSource::table(&FillUniforms {
-                framebuffer_size: [mask_viewport[0], mask_viewport[1]],
+                framebuffer_size: [
+                    MASK_FRAMEBUFFER_WIDTH as f32,
+                    MASK_FRAMEBUFFER_HEIGHT as f32,
+                ],
                 tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
             }));
         self.ctx.draw(0, 6, fill_count as i32);
         self.ctx.end_render_pass();
 
-        self.framebuffer_flags
-            .insert(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY);
+        self.ctx.delete_buffer(self.fill_bindings.vertex_buffers[1]);
+        self.fill_bindings.vertex_buffers[1] = old_fill_buffer;
     }
 
     fn draw_tiles(&mut self) {
-        if self.all_tiles.is_empty() {
+        if self.tiles.is_empty() {
             return;
         }
         if self.mask_to_screen || !self.tiles_to_screen {
             return;
         }
-        println!("DRAW TILES!: {}", self.all_tiles.len());
+        println!("DRAW TILES!: {}", self.tiles.len());
 
         let old_tile_vertex_buffer_id = self.tile_bindings.vertex_buffers[1];
 
@@ -1848,10 +1728,10 @@ impl<'a> Renderer<'a> {
         self.tile_bindings.vertex_buffers[1] = self.ctx.new_buffer(
             BufferType::VertexBuffer,
             BufferUsage::Immutable,
-            BufferSource::slice(&self.all_tiles),
+            BufferSource::slice(&self.tiles),
         );
 
-        self.ensure_index_buffer(self.all_tiles.len());
+        self.ensure_index_buffer(self.tiles.len());
 
         self.ctx.begin_default_pass(PassAction::Nothing);
         self.ctx.apply_pipeline(&self.tile_pipeline);
@@ -1862,8 +1742,7 @@ impl<'a> Renderer<'a> {
             .map(|v| (0..4).map(|i| v[i]).collect::<Vec<f32>>())
             .map(|v| Vec4::from_slice(&v));
         let transform = Mat4::from_cols(transform[0], transform[1], transform[2], transform[3]);
-        let mask_storage = self.mask_storage.as_ref().unwrap();
-        let texture_size = self.ctx.texture_size(mask_storage.mask_img);
+        let texture_size = self.ctx.texture_size(self.mask_img);
         self.ctx
             .apply_uniforms(UniformsSource::table(&TileUniforms {
                 transform,
@@ -1874,51 +1753,11 @@ impl<'a> Renderer<'a> {
                 ],
                 mask_texture_size0: [texture_size.0 as f32, texture_size.1 as f32],
             }));
-        self.ctx
-            .draw(0, 6, self.all_tiles.len().try_into().unwrap());
+        self.ctx.draw(0, 6, self.tiles.len().try_into().unwrap());
         self.ctx.end_render_pass();
 
         self.ctx.delete_buffer(self.tile_bindings.vertex_buffers[1]);
         self.tile_bindings.vertex_buffers[1] = old_tile_vertex_buffer_id;
-    }
-
-    fn reallocate_alpha_tile_pages_if_necessary(&mut self) {
-        println!("reallocate_alpha_tile_pages_if_necessary");
-        let alpha_tile_pages_needed = (self.alpha_tile_count + 0xffff) >> 16;
-        if let Some(ref mask_storage) = self.mask_storage {
-            if alpha_tile_pages_needed <= mask_storage.allocated_page_count {
-                return;
-            }
-        }
-
-        let mask_img = self.ctx.new_render_texture(TextureParams {
-            width: MASK_FRAMEBUFFER_WIDTH,
-            height: MASK_FRAMEBUFFER_HEIGHT * alpha_tile_pages_needed,
-            format: TextureFormat::RGBA16F,
-            min_filter: FilterMode::Nearest,
-            mag_filter: FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        self.mask_storage = Some(MaskStorage {
-            mask_img,
-            render_pass: self.ctx.new_render_pass(mask_img, None),
-            allocated_page_count: alpha_tile_pages_needed,
-        });
-        self.tile_bindings.images[1] = mask_img;
-        self.mask_background_bindings.images[0] = mask_img;
-    }
-
-    fn mask_viewport(&self) -> RectI {
-        let page_count = match self.mask_storage {
-            Some(ref mask_storage) => mask_storage.allocated_page_count as i32,
-            None => 0,
-        };
-        let height = MASK_FRAMEBUFFER_HEIGHT as i32 * page_count;
-        RectI::new(
-            Vector2I::default(),
-            vec2i(MASK_FRAMEBUFFER_WIDTH as i32, height),
-        )
     }
 
     fn ensure_index_buffer(&mut self, mut length: usize) {

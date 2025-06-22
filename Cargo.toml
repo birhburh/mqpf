@@ -8,20 +8,11 @@ repository = "https://github.com/birhburh/mqpf"
 
 build = "build/main.rs"
 
-[features]
-svg = ["usvg"]
-default = []
-
-[[example]]
-name = "tiger"
-required-features = ["svg"]
-
 [dependencies]
 macroquad = { version = "=0.4.14" }
 bitflags = "1.0"
 pathfinder_geometry = "=0.5.1"
 pathfinder_simd = "=0.5.4"
-usvg = { version = "=0.44.0", optional = true }
 
 [build-dependencies]
 euclid = "0.20"
