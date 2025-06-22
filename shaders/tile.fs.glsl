@@ -42,8 +42,7 @@ varying vec4 vBaseColor;
 
 // Masks
 
-float sampleMask(float maskAlpha,
-                 sampler2D maskTexture,
+float sampleMask(sampler2D maskTexture,
                  vec2 maskTextureSize,
                  vec3 maskTexCoord) {
     vec2 maskTexCoordI = floor(maskTexCoord.xy);
@@ -58,7 +57,7 @@ float sampleMask(float maskAlpha,
 
     coverage += maskTexCoord.z;
     coverage = abs(coverage);
-    return min(maskAlpha, coverage);
+    return coverage;
 }
 
 // Main function
@@ -68,8 +67,7 @@ vec4 calculateColor(sampler2D maskTexture0,
                     vec3 maskTexCoord0,
                     vec4 baseColor) {
     // Sample mask.
-    float maskAlpha = 1.0;
-    maskAlpha = sampleMask(maskAlpha, maskTexture0, maskTextureSize0, maskTexCoord0);
+    float maskAlpha = sampleMask(maskTexture0, maskTextureSize0, maskTexCoord0);
 
     // Sample color.
     vec4 color = baseColor;

@@ -20,7 +20,7 @@ fn window_conf() -> Conf {
     let window_width = 600;
     let window_height = window_width * 3 / 4;
     Conf {
-        window_title: format!("FIXED EYES").to_owned(),
+        window_title: format!("ELLIPSE").to_owned(),
         platform: Platform {
             apple_gfx_api,
             ..Default::default()
@@ -42,6 +42,14 @@ async fn main() {
     let mut saved_width = 0.0;
     let mut saved_height = 0.0;
 
+    let mut canvas_scene = Scene {
+        view_box: RectF::new(
+            Vector2F::zero(),
+            Vector2F::new(framebuffer_size.0, framebuffer_size.1),
+        ),
+        ..Default::default()
+    };
+
     loop {
         clear_background(DARKGRAY);
 
@@ -51,24 +59,23 @@ async fn main() {
 
             framebuffer_size = screen_size();
             renderer.update_viewport(framebuffer_size);
+
+            canvas_scene = Scene {
+                view_box: RectF::new(
+                    Vector2F::zero(),
+                    Vector2F::new(framebuffer_size.0, framebuffer_size.1),
+                ),
+                ..Default::default()
+            };
+            let mut path = Path2D::new();
+            path.ellipse(vec2f(180.0, 250.0), vec2f(160.0, 230.0), 0.0, 0.0, PI_2);
+            push_path(
+                &mut canvas_scene,
+                &Transform2F::default(),
+                path,
+                &color_u8!(220, 220, 220, 255),
+            );
         }
-
-        let mut canvas_scene = Scene {
-            view_box: RectF::new(
-                Vector2F::zero(),
-                Vector2F::new(framebuffer_size.0, framebuffer_size.1),
-            ),
-            ..Default::default()
-        };
-
-        let mut path = Path2D::new();
-        path.ellipse(vec2f(180.0, 250.0), vec2f(160.0, 230.0), 0.0, 0.0, PI_2);
-        push_path(
-            &mut canvas_scene,
-            &Transform2F::default(),
-            path,
-            &color_u8!(220, 220, 220, 255),
-        );
 
         renderer.render(&canvas_scene);
 

@@ -6,7 +6,7 @@ use {
         },
         prelude::*,
     },
-    mqpf::{render_nodes, Renderer, Scene},
+    mqpf::{svg::render_nodes, Renderer, Scene},
     pathfinder_geometry::{rect::RectF, transform2d::Transform2F, vector::vec2f},
     usvg::Tree as SvgTree,
 };

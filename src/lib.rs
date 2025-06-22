@@ -1,5 +1,11 @@
 // Most of the code for RAVG rendering stolen from https://github.com/servo/pathfinder
 
+#[macro_use]
+extern crate bitflags;
+
+#[cfg(feature = "svg")]
+pub mod svg;
+
 use {
     macroquad::{
         miniquad::{
@@ -9,6 +15,7 @@ use {
             UniformBlockLayout, UniformsSource, VertexAttribute, VertexFormat, VertexStep,
         },
         prelude::*,
+        ui::Id,
     },
     pathfinder_geometry::{
         line_segment::LineSegment2F,
@@ -21,24 +28,11 @@ use {
     },
     pathfinder_simd::default::{F32x2, F32x4, U32x2},
     std::{
-        collections::HashMap,
+        collections::{hash_map::Entry, HashMap},
         f32::consts::{PI, SQRT_2},
         hash::Hash,
-        mem,
     },
 };
-
-#[cfg(feature = "svg")]
-use {
-    pathfinder_geometry::transform2d::Matrix2x2F,
-    usvg::{
-        tiny_skia_path::{PathSegment, Point},
-        LineCap as UsvgLineCap, LineJoin as UsvgLineJoin,
-    },
-};
-
-#[macro_use]
-extern crate bitflags;
 
 pub const PI_2: f32 = PI * 2.0;
 const EPSILON: f32 = 0.001;
@@ -63,11 +57,6 @@ const MASK_FRAMEBUFFER_HEIGHT: u32 = TILE_HEIGHT / 4 * MASK_TILES_DOWN;
 
 const MAX_FILLS_PER_BATCH: usize = 0x10000;
 
-#[cfg(feature = "svg")]
-const HAIRLINE_STROKE_WIDTH: f32 = 0.0333;
-#[cfg(feature = "svg")]
-const TOLERANCE: f32 = 0.01;
-
 #[repr(C)]
 pub struct FillUniforms {
     pub framebuffer_size: [f32; 2],
@@ -84,8 +73,10 @@ pub struct TileUniforms {
 
 #[derive(Clone)]
 pub struct Path2D {
-    pub outline: Outline,
-    current_contour: Contour,
+    pub id: Id,
+    pub contours: Vec<Contour>,
+    pub bounds: RectF,
+    current_contour: isize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,53 +87,57 @@ pub enum ArcDirection {
 
 impl Path2D {
     #[inline]
-    pub fn new() -> Path2D {
+    pub fn new(id: Id) -> Path2D {
         Path2D {
-            outline: Outline::new(),
-            current_contour: Contour::new(),
+            id,
+            contours: vec![],
+            bounds: RectF::default(),
+            current_contour: -1,
         }
     }
 
     #[inline]
     pub fn close_path(&mut self) {
-        self.current_contour.close();
+        self.contours[self.current_contour as usize].close();
     }
 
     #[inline]
     pub fn move_to(&mut self, to: Vector2F) {
-        self.flush_current_contour();
-        self.current_contour.push_endpoint(to);
+        self.next_contour();
+        self.contours[self.current_contour as usize].push_endpoint(to);
     }
 
     #[inline]
     pub fn line_to(&mut self, to: Vector2F) {
-        self.current_contour.push_endpoint(to);
+        self.contours[self.current_contour as usize].push_endpoint(to);
     }
 
     #[inline]
     pub fn quadratic_curve_to(&mut self, ctrl: Vector2F, to: Vector2F) {
-        self.current_contour.push_quadratic(ctrl, to);
+        self.contours[self.current_contour as usize].push_quadratic(ctrl, to);
     }
 
     #[inline]
     pub fn bezier_curve_to(&mut self, ctrl0: Vector2F, ctrl1: Vector2F, to: Vector2F) {
-        self.current_contour.push_cubic(ctrl0, ctrl1, to);
+        self.contours[self.current_contour as usize].push_cubic(ctrl0, ctrl1, to);
     }
 
     #[inline]
     pub fn arc(
         &mut self,
-        // center: Vec2,
         center: Vector2F,
         radius: f32,
         start_angle: f32,
         end_angle: f32,
         direction: ArcDirection,
     ) {
-        // let transform = Affine2::from_scale_angle_translation(vec2(radius, radius), 0.0, center);
         let transform = Transform2F::from_scale(radius).translate(center);
-        self.current_contour
-            .push_arc(&transform, start_angle, end_angle, direction);
+        self.contours[self.current_contour as usize].push_arc(
+            &transform,
+            start_angle,
+            end_angle,
+            direction,
+        );
     }
 
     pub fn ellipse<A>(
@@ -155,103 +150,100 @@ impl Path2D {
     ) where
         A: IntoVector2F,
     {
-        self.flush_current_contour();
+        self.next_contour();
 
         let transform = Transform2F::from_scale(axes)
             .rotate(rotation)
             .translate(center);
-        self.current_contour
-            .push_arc(&transform, start_angle, end_angle, ArcDirection::CW);
+        self.contours[self.current_contour as usize].push_arc(
+            &transform,
+            start_angle,
+            end_angle,
+            ArcDirection::CW,
+        );
 
         if end_angle - start_angle >= 2.0 * PI {
-            self.current_contour.close();
+            self.contours[self.current_contour as usize].close();
         }
     }
 
-    fn flush_current_contour(&mut self) {
-        if !self.current_contour.is_empty() {
-            self.outline
-                .push_contour(mem::replace(&mut self.current_contour, Contour::new()));
-        }
-    }
-}
+    // #[inline]
+    // pub fn from_segments<I>(segments: I) -> Outline
+    // where
+    //     I: Iterator<Item = Segment>,
+    // {
+    //     let mut outline = Outline::new();
+    //     let mut current_contour = Contour::new();
 
-#[derive(Clone, Debug)]
-pub struct Outline {
-    pub contours: Vec<Contour>,
-    pub bounds: RectF,
-}
+    //     for segment in segments {
+    //         if segment.flags.contains(SegmentFlags::FIRST_IN_SUBPATH) {
+    //             if !current_contour.is_empty() {
+    //                 outline
+    //                     .contours
+    //                     .push(mem::replace(&mut current_contour, Contour::new()));
+    //             }
+    //             current_contour.push_point(segment.baseline.from(), PointFlags::empty(), true);
+    //         }
 
-impl Outline {
-    #[inline]
-    pub fn new() -> Outline {
-        Outline {
-            contours: vec![],
-            bounds: RectF::default(),
-        }
-    }
+    //         if segment.flags.contains(SegmentFlags::CLOSES_SUBPATH) {
+    //             if !current_contour.is_empty() {
+    //                 current_contour.close();
+    //                 let contour = mem::replace(&mut current_contour, Contour::new());
+    //                 outline.push_contour(contour);
+    //             }
+    //             continue;
+    //         }
 
-    #[inline]
-    pub fn from_segments<I>(segments: I) -> Outline
-    where
-        I: Iterator<Item = Segment>,
-    {
-        let mut outline = Outline::new();
-        let mut current_contour = Contour::new();
+    //         if segment.is_none() {
+    //             continue;
+    //         }
 
-        for segment in segments {
-            if segment.flags.contains(SegmentFlags::FIRST_IN_SUBPATH) {
-                if !current_contour.is_empty() {
-                    outline
-                        .contours
-                        .push(mem::replace(&mut current_contour, Contour::new()));
-                }
-                current_contour.push_point(segment.baseline.from(), PointFlags::empty(), true);
+    //         if !segment.is_line() {
+    //             current_contour.push_point(segment.ctrl.from(), PointFlags::CONTROL_POINT_0, true);
+    //             if !segment.is_quadratic() {
+    //                 current_contour.push_point(
+    //                     segment.ctrl.to(),
+    //                     PointFlags::CONTROL_POINT_1,
+    //                     true,
+    //                 );
+    //             }
+    //         }
+
+    //         current_contour.push_point(segment.baseline.to(), PointFlags::empty(), true);
+    //     }
+
+    //     outline.push_contour(current_contour);
+    //     outline
+    // }
+
+    pub fn next_contour(&mut self) {
+        if self.current_contour >= 0 {
+            let prev_contour = &mut self.contours[self.current_contour as usize];
+            if !prev_contour.is_empty() {
+                self.bounds = self.bounds.union_rect(prev_contour.bounds);
             }
-
-            if segment.flags.contains(SegmentFlags::CLOSES_SUBPATH) {
-                if !current_contour.is_empty() {
-                    current_contour.close();
-                    let contour = mem::replace(&mut current_contour, Contour::new());
-                    outline.push_contour(contour);
-                }
-                continue;
-            }
-
-            if segment.is_none() {
-                continue;
-            }
-
-            if !segment.is_line() {
-                current_contour.push_point(segment.ctrl.from(), PointFlags::CONTROL_POINT_0, true);
-                if !segment.is_quadratic() {
-                    current_contour.push_point(
-                        segment.ctrl.to(),
-                        PointFlags::CONTROL_POINT_1,
-                        true,
-                    );
-                }
-            }
-
-            current_contour.push_point(segment.baseline.to(), PointFlags::empty(), true);
         }
 
-        outline.push_contour(current_contour);
-        outline
-    }
+        self.current_contour += 1;
+        assert!(self.current_contour >= 0);
+        let is_new = self.current_contour as usize == self.contours.len();
+        if is_new {
+            self.contours.push(Contour::new());
+        }
 
-    pub fn push_contour(&mut self, contour: Contour) {
+        let contour = &mut self.contours[self.current_contour as usize];
         if contour.is_empty() {
             return;
         }
 
-        if self.contours.is_empty() {
-            self.bounds = contour.bounds;
-        } else {
-            self.bounds = self.bounds.union_rect(contour.bounds);
-        }
+        self.bounds = self.bounds.union_rect(contour.bounds);
 
-        self.contours.push(contour);
+        if !is_new {
+            contour.changed = false;
+            contour.first_time = false;
+            contour.cur_point = 0;
+            contour.cur_flag = 0;
+        }
     }
 
     fn transform(&mut self, transform: &Transform2F) {
@@ -275,6 +267,10 @@ impl Outline {
 
 #[derive(Clone, Debug)]
 pub struct Contour {
+    cur_point: usize,
+    cur_flag: usize,
+    first_time: bool,
+    changed: bool,
     points: Vec<Vector2F>,
     flags: Vec<PointFlags>,
     bounds: RectF,
@@ -285,6 +281,10 @@ impl Contour {
     #[inline]
     pub fn new() -> Contour {
         Contour {
+            cur_point: 0,
+            cur_flag: 0,
+            first_time: true,
+            changed: false,
             points: vec![],
             flags: vec![],
             bounds: RectF::default(),
@@ -420,13 +420,34 @@ impl Contour {
     fn push_point(&mut self, point: Vector2F, flags: PointFlags, update_bounds: bool) {
         debug_assert!(!point.x().is_nan() && !point.y().is_nan());
 
+        if !self.first_time {
+            if !self.changed {
+                if self.points[self.cur_point] != point {
+                    self.changed = true;
+                }
+                self.cur_point += 1;
+            }
+        } else {
+            self.changed = true;
+            self.cur_point += 1;
+        }
+
+        if !self.changed {
+            return;
+        }
+
         if update_bounds {
             let first = self.is_empty();
             union_rect(&mut self.bounds, point, first);
         }
 
-        self.points.push(point);
-        self.flags.push(flags);
+        let is_new = (self.cur_point - 1) == self.points.len();
+        if is_new {
+            self.points.push(point);
+            self.flags.push(flags);
+        } else if self.changed {
+            self.points[self.cur_point - 1] = point;
+        }
     }
 
     #[inline]
@@ -840,22 +861,12 @@ impl Hash for HashedColor {
 
 impl Eq for HashedColor {}
 
-/// The vector scene to be rendered.
-#[derive(Clone, Default)]
-pub struct Scene {
-    pub paths: Vec<Path>,
-    pub colors: Vec<Color>,
-    pub cache: HashMap<HashedColor, PaintId>,
-    pub bounds: RectF,
-    pub view_box: RectF,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PaintId(u16);
 
 #[derive(Clone, Debug)]
 pub struct Path {
-    outline: Outline,
+    path_id: Id,
     paint_id: PaintId,
 }
 
@@ -869,7 +880,6 @@ struct Fill {
 bitflags! {
     struct FramebufferFlags: u8 {
         const MASK_FRAMEBUFFER_IS_DIRTY = 0x01;
-        const DEST_FRAMEBUFFER_IS_DIRTY = 0x02;
     }
 }
 
@@ -906,7 +916,7 @@ fn round_rect_out_to_tile_bounds(rect: RectF) -> RectI {
 
 fn process_segment(
     segment: &Segment,
-    view_box: RectF,
+    view_box: RectI,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
@@ -962,7 +972,7 @@ fn process_segment(
 
 fn process_line_segment(
     line_segment: LineSegment2F,
-    view_box: RectF,
+    view_box: RectI,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
@@ -970,8 +980,8 @@ fn process_line_segment(
     path_tile_bounds: &RectI,
 ) {
     let clip_box = RectF::from_points(
-        vec2f(view_box.min_x(), f32::NEG_INFINITY),
-        view_box.lower_right(),
+        vec2f(view_box.min_x() as f32, f32::NEG_INFINITY),
+        view_box.lower_right().to_f32(),
     );
     let line_segment = match clip_line_segment_to_rect(line_segment, clip_box) {
         None => return,
@@ -1287,6 +1297,12 @@ pub struct Renderer<'a> {
     ctx: &'a mut dyn RenderingBackend,
     viewport: RectI,
     background_color: Color,
+
+    paths: Vec<Path>,
+    colors: Vec<Color>,
+    color_cache: HashMap<HashedColor, PaintId>,
+    retained_paths: HashMap<Id, Path2D>,
+
     texture_metadata_texture: TextureId,
     mask_storage: Option<MaskStorage>,
     alpha_tile_count: u32,
@@ -1302,6 +1318,8 @@ pub struct Renderer<'a> {
     tiles_vertex_indices_length: usize,
     buffered_fills: Vec<Fill>,
     pending_fills: Vec<Fill>,
+    all_tiles: Vec<Tile>,
+
     mask_background: bool,
     mask_to_screen: bool,
     tiles_to_screen: bool,
@@ -1315,8 +1333,8 @@ impl<'a> Renderer<'a> {
         background_color: Color,
     ) -> Renderer<'a> {
         let viewport = RectI::new(
-            Vector2I::default(),
-            Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
+            vec2i(0, 0),
+            vec2i(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
         );
 
         let quad_vertex_positions_buffer = ctx.new_buffer(
@@ -1514,6 +1532,12 @@ impl<'a> Renderer<'a> {
 
             background_color,
 
+            retained_paths: HashMap::new(),
+
+            paths: vec![],
+            colors: vec![],
+            color_cache: HashMap::default(),
+
             tiles_vertex_indices_buffer: None,
             tiles_vertex_indices_length: 0,
 
@@ -1534,6 +1558,9 @@ impl<'a> Renderer<'a> {
 
             buffered_fills: vec![],
             pending_fills: vec![],
+            all_tiles: vec![],
+
+            // mask_to_screen: true,
             mask_to_screen: false,
             mask_background: true,
             tiles_to_screen: true,
@@ -1542,12 +1569,56 @@ impl<'a> Renderer<'a> {
 
     pub fn update_viewport(&mut self, framebuffer_size: (f32, f32)) {
         self.viewport = RectI::new(
-            Vector2I::default(),
-            Vector2I::new(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
+            vec2i(0, 0),
+            vec2i(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
         );
+        self.retained_paths.clear();
     }
 
-    pub fn render(&mut self, scene: &Scene) {
+    pub fn begin_path(&mut self, id: Id) -> &mut Path2D {
+        match self.retained_paths.entry(id) {
+            Entry::Occupied(entry) => {
+                let path = entry.into_mut();
+                path.current_contour = -1;
+                path
+            }
+            Entry::Vacant(entry) => entry.insert(Path2D::new(id)),
+        }
+    }
+
+    pub fn fill_path(&mut self, transform: &Transform2F, path_id: Id, color: &Color) {
+        let paint_id = self.push_color(color);
+        if let Entry::Occupied(path) = self.retained_paths.entry(path_id) {
+            let path = path.into_mut();
+            let changed = path.contours.iter().any(|contour| contour.changed);
+            if changed {
+                self.paths
+                    .iter()
+                    .position(|path| path.path_id == path_id)
+                    .map(|e| self.paths.remove(e));
+            }
+            if !self.paths.iter().any(|path| path.path_id == path_id) {
+                path.transform(transform);
+                path.bounds = path
+                    .bounds
+                    .union_rect(path.contours[path.current_contour as usize].bounds);
+                self.paths.push(Path { path_id, paint_id });
+            }
+        }
+    }
+
+    fn push_color(&mut self, base_color: &Color) -> PaintId {
+        if let Some(paint_id) = self.color_cache.get(&HashedColor(*base_color)) {
+            return *paint_id;
+        }
+
+        let paint_id = PaintId(self.colors.len() as u16);
+        self.color_cache.insert(HashedColor(*base_color), paint_id);
+        self.colors.push(*base_color);
+        paint_id
+    }
+
+    pub fn render(&mut self) {
         let transform = Transform2F::default();
 
         self.framebuffer_flags = FramebufferFlags::empty();
@@ -1555,80 +1626,108 @@ impl<'a> Renderer<'a> {
 
         let mut next_alpha_tile_index = 0;
 
-        let palette = scene.colors.clone();
+        let palette = self.colors.clone();
         self.upload_palette(&palette);
-        let mut all_tiles = vec![];
 
         let mut tiles = Vec::with_capacity(1000);
-        for path_object in &scene.paths {
-            let mut outline = path_object.outline.clone();
-            outline.close_all_contours();
-            outline.transform(&transform);
+        let mut all_fills = Vec::with_capacity(1000);
+        let changed = self.retained_paths.iter().any(|(_, p)| p.contours.iter().any(|c| c.changed));
+        dbg!(changed);
+        if changed {
+            self.all_tiles.clear();
+        }
+        for scene_path in &self.paths {
+            dbg!(scene_path.path_id);
+            if let Entry::Occupied(path) = self.retained_paths.entry(scene_path.path_id) {
+                let path = path.into_mut();
+                path.close_all_contours();
+                path.transform(&transform);
 
-            let bounds = outline
-                .bounds
-                .intersection(scene.view_box)
-                .unwrap_or_default();
-            let path_tile_bounds = round_rect_out_to_tile_bounds(bounds);
+                let path_tile_bounds = round_rect_out_to_tile_bounds(path.bounds);
 
-            for y in path_tile_bounds.min_y()..path_tile_bounds.max_y() {
-                for x in path_tile_bounds.min_x()..path_tile_bounds.max_x() {
-                    tiles.push(Tile {
-                        tile_x: x as f32,
-                        tile_y: y as f32,
-                        mask_tex_coord_0: AlphaTileId::INVALID,
-                        mask_tex_coord_1: AlphaTileId::INVALID,
-                        color: path_object.paint_id.0 as f32,
-                        backdrop: 0.0,
-                    });
-                }
-            }
-
-            let mut fills = Vec::with_capacity(
-                path_tile_bounds.size().x() as usize * path_tile_bounds.size().y() as usize,
-            );
-            let mut backdrops = vec![0; path_tile_bounds.width() as usize];
-
-            for contour in &outline.contours {
-                for segment in contour.iter() {
-                    process_segment(
-                        &segment,
-                        scene.view_box,
-                        &mut next_alpha_tile_index,
-                        &mut fills,
-                        &mut backdrops,
-                        &mut tiles,
-                        &path_tile_bounds,
-                    );
-                }
-            }
-
-            let tiles_across = path_tile_bounds.width() as usize;
-            for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
-                let column = draw_tile_index % tiles_across;
-                let delta = draw_tile.backdrop as i32;
-                draw_tile.backdrop = backdrops[column] as f32;
-
-                backdrops[column] += delta;
-            }
-
-            if !fills.is_empty() {
-                self.add_fills(&fills, 0, fills.len());
-            }
-
-            for tile in &tiles {
-                if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
-                    continue;
+                for y in path_tile_bounds.min_y()..path_tile_bounds.max_y() {
+                    for x in path_tile_bounds.min_x()..path_tile_bounds.max_x() {
+                        tiles.push(Tile {
+                            tile_x: x as f32,
+                            tile_y: y as f32,
+                            mask_tex_coord_0: AlphaTileId::INVALID,
+                            mask_tex_coord_1: AlphaTileId::INVALID,
+                            color: scene_path.paint_id.0 as f32,
+                            backdrop: 0.0,
+                        });
+                    }
                 }
 
-                all_tiles.push(*tile);
+                let mut fills = Vec::with_capacity(
+                    path_tile_bounds.size().x() as usize * path_tile_bounds.size().y() as usize,
+                );
+                let mut backdrops = vec![0; path_tile_bounds.width() as usize];
+
+                for contour in &path.contours {
+                    dbg!(contour.changed);
+                    if contour.changed {
+                        for segment in contour.iter() {
+                            process_segment(
+                                &segment,
+                                self.viewport,
+                                &mut next_alpha_tile_index,
+                                &mut fills,
+                                &mut backdrops,
+                                &mut tiles,
+                                &path_tile_bounds,
+                            );
+                        }
+                    }
+                }
+
+                let tiles_across = path_tile_bounds.width() as usize;
+                for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
+                    let column = draw_tile_index % tiles_across;
+                    let delta = draw_tile.backdrop as i32;
+                    draw_tile.backdrop = backdrops[column] as f32;
+
+                    backdrops[column] += delta;
+                }
+
+                if !fills.is_empty() {
+                    all_fills.append(&mut fills);
+                }
+                for tile in &tiles {
+                    if tile.mask_tex_coord_0 == AlphaTileId::INVALID && tile.backdrop == 0.0 {
+                        continue;
+                    }
+
+                    self.all_tiles.push(*tile);
+                }
+                tiles.resize(0, Tile::default());
             }
-            tiles.resize(0, Tile::default());
+        }
+
+        if !all_fills.is_empty() {
+            self.add_fills(&all_fills, 0, all_fills.len());
         }
 
         self.flush_fills();
 
-        self.draw_tiles(&all_tiles);
+        if self.mask_background && !self.mask_to_screen {
+            if let Some(mask_storage) = self.mask_storage.as_ref() {
+                self.ctx
+                    .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
+                self.ctx.apply_pipeline(&self.mask_background_pipeline);
+                self.ctx.apply_bindings(&self.mask_background_bindings);
+
+                let texture_size = self.ctx.texture_size(mask_storage.mask_img);
+                self.ctx
+                    .apply_uniforms(UniformsSource::table(&FillUniforms {
+                        framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
+                        tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
+                    }));
+                self.ctx.draw(0, 6, 1);
+                self.ctx.end_render_pass();
+            }
+        }
+
+        self.draw_tiles();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
@@ -1655,6 +1754,7 @@ impl<'a> Renderer<'a> {
         if added_fills.is_empty() {
             return;
         }
+        println!("ADD FILLS!");
 
         self.pending_fills.reserve(last_el - first_el);
         for fill in &added_fills[first_el..last_el] {
@@ -1675,6 +1775,13 @@ impl<'a> Renderer<'a> {
         if self.buffered_fills.is_empty() {
             return;
         }
+        // if self
+        //     .framebuffer_flags
+        //     .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
+        // {
+        //     return;
+        // }
+        println!("FLUSH FILLS!");
 
         debug_assert!(!self.buffered_fills.is_empty());
         debug_assert!(self.buffered_fills.len() <= u32::MAX as usize);
@@ -1706,8 +1813,9 @@ impl<'a> Renderer<'a> {
             .framebuffer_flags
             .contains(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY)
         {
-            action = PassAction::clear_color(0.0, 0.0, 0.0, 0.0)
-        };
+            action = PassAction::clear_color(0.0, 0.0, 0.0, 0.0);
+        }
+        println!("DRAW FILLS!");
 
         if self.mask_to_screen {
             self.ctx
@@ -1728,40 +1836,27 @@ impl<'a> Renderer<'a> {
 
         self.framebuffer_flags
             .insert(FramebufferFlags::MASK_FRAMEBUFFER_IS_DIRTY);
-
-        if self.mask_background && !self.mask_to_screen {
-            self.ctx
-                .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
-            self.ctx.apply_pipeline(&self.mask_background_pipeline);
-            self.ctx.apply_bindings(&self.mask_background_bindings);
-
-            let texture_size = self.ctx.texture_size(mask_storage.mask_img);
-            self.ctx
-                .apply_uniforms(UniformsSource::table(&FillUniforms {
-                    framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
-                    tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
-                }));
-            self.ctx.draw(0, 6, 1);
-            self.ctx.end_render_pass();
-        }
     }
 
-    fn draw_tiles(&mut self, tiles: &Vec<Tile>) {
-        if tiles.is_empty() {
+    fn draw_tiles(&mut self) {
+        if self.all_tiles.is_empty() {
             return;
         }
         if self.mask_to_screen || !self.tiles_to_screen {
             return;
         }
+        println!("DRAW TILES!: {}", self.all_tiles.len());
 
         let old_tile_vertex_buffer_id = self.tile_bindings.vertex_buffers[1];
+
+        println!("SET TILES BUFFER!");
         self.tile_bindings.vertex_buffers[1] = self.ctx.new_buffer(
             BufferType::VertexBuffer,
             BufferUsage::Immutable,
-            BufferSource::slice(&tiles),
+            BufferSource::slice(&self.all_tiles),
         );
 
-        self.ensure_index_buffer(tiles.len());
+        self.ensure_index_buffer(self.all_tiles.len());
 
         let clear_color = self.background_color;
         let mut action = PassAction::Nothing;
@@ -1791,7 +1886,8 @@ impl<'a> Renderer<'a> {
                 ],
                 mask_texture_size0: [texture_size.0 as f32, texture_size.1 as f32],
             }));
-        self.ctx.draw(0, 6, tiles.len().try_into().unwrap());
+        self.ctx
+            .draw(0, 6, self.all_tiles.len().try_into().unwrap());
         self.ctx.end_render_pass();
 
         self.ctx.delete_buffer(self.tile_bindings.vertex_buffers[1]);
@@ -1799,6 +1895,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn reallocate_alpha_tile_pages_if_necessary(&mut self) {
+        println!("reallocate_alpha_tile_pages_if_necessary");
         let alpha_tile_pages_needed = (self.alpha_tile_count + 0xffff) >> 16;
         if let Some(ref mask_storage) = self.mask_storage {
             if alpha_tile_pages_needed <= mask_storage.allocated_page_count {
@@ -1810,6 +1907,8 @@ impl<'a> Renderer<'a> {
             width: MASK_FRAMEBUFFER_WIDTH,
             height: MASK_FRAMEBUFFER_HEIGHT * alpha_tile_pages_needed,
             format: TextureFormat::RGBA16F,
+            min_filter: FilterMode::Nearest,
+            mag_filter: FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -1867,867 +1966,5 @@ impl<'a> Renderer<'a> {
         let draw_viewport = self.viewport.size().to_f32();
         let scale = Vector4F::new(2.0 / draw_viewport.x(), -2.0 / draw_viewport.y(), 1.0, 1.0);
         Transform4F::from_scale(scale).translate(Vector4F::new(-1.0, 1.0, 0.0, 1.0))
-    }
-}
-
-pub fn push_path(scene: &mut Scene, transform: &Transform2F, mut path: Path2D, color: &Color) {
-    let paint_id = push_color(scene, color);
-    path.flush_current_contour();
-    let mut outline = path.outline;
-    outline.transform(transform);
-    let new_path_bounds = outline.bounds;
-    scene.paths.push(Path { outline, paint_id });
-    scene.bounds = scene.bounds.union_rect(new_path_bounds);
-}
-
-fn push_color(scene: &mut Scene, base_color: &Color) -> PaintId {
-    if let Some(paint_id) = scene.cache.get(&HashedColor(*base_color)) {
-        return *paint_id;
-    }
-
-    let paint_id = PaintId(scene.colors.len() as u16);
-    scene.cache.insert(HashedColor(*base_color), paint_id);
-    scene.colors.push(*base_color);
-    paint_id
-}
-
-#[cfg(feature = "svg")]
-struct UsvgPathToSegments<I>
-where
-    I: Iterator<Item = PathSegment>,
-{
-    iter: I,
-    first_subpath_point: Vector2F,
-    last_subpath_point: Vector2F,
-    just_moved: bool,
-}
-
-#[cfg(feature = "svg")]
-impl<I> UsvgPathToSegments<I>
-where
-    I: Iterator<Item = PathSegment>,
-{
-    fn new(iter: I) -> UsvgPathToSegments<I> {
-        UsvgPathToSegments {
-            iter,
-            first_subpath_point: Vector2F::zero(),
-            last_subpath_point: Vector2F::zero(),
-            just_moved: false,
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-impl<I> Iterator for UsvgPathToSegments<I>
-where
-    I: Iterator<Item = PathSegment>,
-{
-    type Item = Segment;
-
-    fn next(&mut self) -> Option<Segment> {
-        match self.iter.next()? {
-            PathSegment::MoveTo(Point { x, y }) => {
-                let to = vec2f(x as f32, y as f32);
-                self.first_subpath_point = to;
-                self.last_subpath_point = to;
-                self.just_moved = true;
-                self.next()
-            }
-            PathSegment::LineTo(Point { x, y }) => {
-                let to = vec2f(x as f32, y as f32);
-                let mut segment = Segment::line(LineSegment2F::new(self.last_subpath_point, to));
-                if self.just_moved {
-                    segment.flags.insert(SegmentFlags::FIRST_IN_SUBPATH);
-                }
-                self.last_subpath_point = to;
-                self.just_moved = false;
-                Some(segment)
-            }
-            PathSegment::CubicTo(
-                Point { x: x1, y: y1 },
-                Point { x: x2, y: y2 },
-                Point { x, y },
-            ) => {
-                let ctrl0 = vec2f(x1 as f32, y1 as f32);
-                let ctrl1 = vec2f(x2 as f32, y2 as f32);
-                let to = vec2f(x as f32, y as f32);
-                let mut segment = Segment::cubic(
-                    LineSegment2F::new(self.last_subpath_point, to),
-                    LineSegment2F::new(ctrl0, ctrl1),
-                );
-                if self.just_moved {
-                    segment.flags.insert(SegmentFlags::FIRST_IN_SUBPATH);
-                }
-                self.last_subpath_point = to;
-                self.just_moved = false;
-                Some(segment)
-            }
-            PathSegment::QuadTo(Point { x: x1, y: y1 }, Point { x: x2, y: y2 }) => {
-                let ctrl = vec2f(x1 as f32, y1 as f32);
-                let to = vec2f(x2 as f32, y2 as f32);
-                let mut segment =
-                    Segment::quadratic(LineSegment2F::new(self.last_subpath_point, to), ctrl);
-                if self.just_moved {
-                    segment.flags.insert(SegmentFlags::FIRST_IN_SUBPATH);
-                }
-                self.last_subpath_point = to;
-                self.just_moved = false;
-                Some(segment)
-            }
-            PathSegment::Close => {
-                let mut segment = Segment::line(LineSegment2F::new(
-                    self.last_subpath_point,
-                    self.first_subpath_point,
-                ));
-                segment.flags.insert(SegmentFlags::CLOSES_SUBPATH);
-                self.just_moved = false;
-                self.last_subpath_point = self.first_subpath_point;
-                Some(segment)
-            }
-        }
-    }
-}
-
-/// The shape of the ends of the stroke.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineCap {
-    /// The ends of lines are squared off at the endpoints.
-    Butt,
-    /// The ends of lines are squared off by adding a box with an equal width and half the height
-    /// of the line's thickness.
-    Square,
-    /// The ends of lines are rounded.
-    Round,
-}
-
-#[cfg(feature = "svg")]
-impl LineCap {
-    #[inline]
-    fn from_usvg_line_cap(usvg_line_cap: UsvgLineCap) -> LineCap {
-        match usvg_line_cap {
-            UsvgLineCap::Butt => LineCap::Butt,
-            UsvgLineCap::Round => LineCap::Round,
-            UsvgLineCap::Square => LineCap::Square,
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-/// The shape used to join two line segments where they meet.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LineJoin {
-    /// Connected segments are joined by extending their outside edges to connect at a single
-    /// point, with the effect of filling an additional lozenge-shaped area. The `f32` value
-    /// specifies the miter limit ratio.
-    Miter(f32),
-    /// Connected segments are joined by extending their outside edges to connect at a single
-    /// point, with the effect of filling an additional lozenge-shaped area. The `f32` value
-    /// specifies the miter limit ratio.
-    MiterClip(f32),
-    /// Fills an additional triangular area between the common endpoint of connected segments and
-    /// the separate outside rectangular corners of each segment.
-    Bevel,
-    /// Rounds off the corners of a shape by filling an additional sector of disc centered at the
-    /// common endpoint of connected segments. The radius for these rounded corners is equal to the
-    /// line width.
-    Round,
-}
-
-#[cfg(feature = "svg")]
-impl LineJoin {
-    #[inline]
-    fn from_usvg_line_join(usvg_line_join: UsvgLineJoin, miter_limit: f32) -> LineJoin {
-        match usvg_line_join {
-            UsvgLineJoin::Miter => LineJoin::Miter(miter_limit),
-            UsvgLineJoin::MiterClip => LineJoin::MiterClip(miter_limit),
-            UsvgLineJoin::Round => LineJoin::Round,
-            UsvgLineJoin::Bevel => LineJoin::Bevel,
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-struct DashState<'a> {
-    output: Contour,
-    dashes: &'a [f32],
-    current_dash_index: usize,
-    distance_left: f32,
-}
-
-#[cfg(feature = "svg")]
-impl<'a> DashState<'a> {
-    fn new(dashes: &'a [f32], mut offset: f32) -> DashState<'a> {
-        let total: f32 = dashes.iter().cloned().sum();
-        offset %= total;
-
-        let mut current_dash_index = 0;
-        while current_dash_index < dashes.len() {
-            let dash = dashes[current_dash_index];
-            if offset < dash {
-                break;
-            }
-            offset -= dash;
-            current_dash_index += 1;
-        }
-
-        DashState {
-            output: Contour::new(),
-            dashes,
-            current_dash_index,
-            distance_left: offset,
-        }
-    }
-
-    #[inline]
-    fn is_on(&self) -> bool {
-        self.current_dash_index % 2 == 0
-    }
-}
-
-#[cfg(feature = "svg")]
-struct ContourDash<'a, 'b, 'c> {
-    input: &'a Contour,
-    output: &'b mut Outline,
-    state: &'c mut DashState<'a>,
-}
-
-#[cfg(feature = "svg")]
-impl<'a, 'b, 'c> ContourDash<'a, 'b, 'c> {
-    fn new(
-        input: &'a Contour,
-        output: &'b mut Outline,
-        state: &'c mut DashState<'a>,
-    ) -> ContourDash<'a, 'b, 'c> {
-        ContourDash {
-            input,
-            output,
-            state,
-        }
-    }
-
-    fn dash(&mut self) {
-        let mut iterator = self.input.iter();
-        let mut queued_segment = None;
-        loop {
-            if queued_segment.is_none() {
-                match iterator.next() {
-                    None => break,
-                    Some(segment) => queued_segment = Some(segment),
-                }
-            }
-
-            let mut current_segment = queued_segment.take().unwrap();
-            let mut distance = self.state.distance_left;
-
-            let t = current_segment.time_for_distance(distance);
-            if t < 1.0 {
-                let (prev_segment, next_segment) = current_segment.split(t);
-                current_segment = prev_segment;
-                queued_segment = Some(next_segment);
-            } else {
-                distance = current_segment.arc_length();
-            }
-
-            if self.state.is_on() {
-                self.state
-                    .output
-                    .push_segment(&current_segment, PushSegmentFlags::empty());
-            }
-
-            self.state.distance_left -= distance;
-            if self.state.distance_left < EPSILON {
-                if self.state.is_on() {
-                    self.output
-                        .push_contour(mem::replace(&mut self.state.output, Contour::new()));
-                }
-
-                self.state.current_dash_index += 1;
-                if self.state.current_dash_index == self.state.dashes.len() {
-                    self.state.current_dash_index = 0;
-                }
-
-                self.state.distance_left = self.state.dashes[self.state.current_dash_index];
-            }
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-/// Transforms a stroke into a dashed stroke.
-pub struct OutlineDash<'a> {
-    input: &'a Outline,
-    output: Outline,
-    state: DashState<'a>,
-}
-
-#[cfg(feature = "svg")]
-impl<'a> OutlineDash<'a> {
-    /// Creates a new outline dasher for the given stroke.
-    ///
-    /// Arguments:
-    ///
-    /// * `input`: The input stroke to be dashed. This must not yet been converted to a fill; i.e.
-    ///   it is assumed that the stroke-to-fill conversion happens *after* this dashing process.
-    ///
-    /// * `dashes`: The list of dashes, specified as alternating pixel lengths of lines and gaps
-    ///   that describe the pattern. See
-    ///   <https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/setLineDash>.
-    ///
-    /// * `offset`: The line dash offset, or "phase". See
-    ///   <https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/lineDashOffset>.
-    #[inline]
-    pub fn new(input: &'a Outline, dashes: &'a [f32], offset: f32) -> OutlineDash<'a> {
-        OutlineDash {
-            input,
-            output: Outline::new(),
-            state: DashState::new(dashes, offset),
-        }
-    }
-
-    /// Performs the dashing operation.
-    ///
-    /// The results can be retrieved with the `into_outline()` method.
-    pub fn dash(&mut self) {
-        for contour in &self.input.contours {
-            ContourDash::new(contour, &mut self.output, &mut self.state).dash()
-        }
-    }
-
-    /// Returns the resulting dashed outline.
-    pub fn into_outline(mut self) -> Outline {
-        if self.state.is_on() {
-            self.output.push_contour(self.state.output);
-        }
-        self.output
-    }
-}
-
-#[cfg(feature = "svg")]
-/// How an outline should be stroked.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StrokeStyle {
-    /// The width of the stroke in scene units.
-    pub line_width: f32,
-    /// The shape of the ends of the stroke.
-    pub line_cap: LineCap,
-    /// The shape used to join two line segments where they meet.
-    pub line_join: LineJoin,
-}
-
-#[cfg(feature = "svg")]
-trait AddJoin {
-    fn might_need_join(&self, join: LineJoin) -> bool;
-    fn add_join(
-        &mut self,
-        distance: f32,
-        join: LineJoin,
-        join_point: Vector2F,
-        next_tangent: LineSegment2F,
-    );
-}
-
-#[cfg(feature = "svg")]
-impl AddJoin for Contour {
-    fn might_need_join(&self, join: LineJoin) -> bool {
-        if self.len() < 2 {
-            false
-        } else {
-            match join {
-                LineJoin::Miter(_) | LineJoin::MiterClip(_) | LineJoin::Round => true,
-                LineJoin::Bevel => false,
-            }
-        }
-    }
-
-    fn add_join(
-        &mut self,
-        distance: f32,
-        join: LineJoin,
-        join_point: Vector2F,
-        next_tangent: LineSegment2F,
-    ) {
-        let (p0, p1) = (self.position_of_last(2), self.position_of_last(1));
-        let prev_tangent = LineSegment2F::new(p0, p1);
-
-        if prev_tangent.square_length() < EPSILON || next_tangent.square_length() < EPSILON {
-            return;
-        }
-
-        match join {
-            LineJoin::Bevel => {}
-            LineJoin::Miter(miter_limit) | LineJoin::MiterClip(miter_limit) => {
-                if let Some(prev_tangent_t) = prev_tangent.intersection_t(next_tangent) {
-                    if prev_tangent_t < -EPSILON {
-                        return;
-                    }
-                    let miter_endpoint = prev_tangent.sample(prev_tangent_t);
-                    let threshold = miter_limit * distance;
-                    if (miter_endpoint - join_point).square_length() > threshold * threshold {
-                        return;
-                    }
-                    self.push_endpoint(miter_endpoint);
-                }
-            }
-            LineJoin::Round => {
-                let scale = distance.abs();
-                let transform = Transform2F::from_scale(scale).translate(join_point);
-                let chord_from = (prev_tangent.to() - join_point).normalize();
-                let chord_to = (next_tangent.to() - join_point).normalize();
-                let chord = LineSegment2F::new(chord_from, chord_to);
-                self.push_arc_from_unit_chord(&transform, chord, ArcDirection::CW);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-trait Offset {
-    fn offset(&self, distance: f32, join: LineJoin, contour: &mut Contour);
-    fn add_to_contour(
-        &self,
-        distance: f32,
-        join: LineJoin,
-        join_point: Vector2F,
-        contour: &mut Contour,
-    );
-    fn offset_once(&self, distance: f32) -> Self;
-    fn error_is_within_tolerance(&self, other: &Segment, distance: f32) -> bool;
-}
-
-#[cfg(feature = "svg")]
-impl Offset for Segment {
-    fn offset(&self, distance: f32, join: LineJoin, contour: &mut Contour) {
-        let join_point = self.baseline.from();
-        if self.baseline.square_length() < TOLERANCE * TOLERANCE {
-            self.add_to_contour(distance, join, join_point, contour);
-            return;
-        }
-
-        let candidate = self.offset_once(distance);
-        if self.error_is_within_tolerance(&candidate, distance) {
-            candidate.add_to_contour(distance, join, join_point, contour);
-            return;
-        }
-
-        let (before, after) = self.split(0.5);
-        before.offset(distance, join, contour);
-        after.offset(distance, join, contour);
-    }
-
-    fn add_to_contour(
-        &self,
-        distance: f32,
-        join: LineJoin,
-        join_point: Vector2F,
-        contour: &mut Contour,
-    ) {
-        // Add join if necessary.
-        if contour.might_need_join(join) {
-            let p3 = self.baseline.from();
-            let p4 = if self.is_line() {
-                self.baseline.to()
-            } else {
-                // NB: If you change the representation of quadratic curves, you will need to
-                // change this.
-                self.ctrl.from()
-            };
-
-            contour.add_join(distance, join, join_point, LineSegment2F::new(p4, p3));
-        }
-
-        // Push segment.
-        let flags = PushSegmentFlags::UPDATE_BOUNDS | PushSegmentFlags::INCLUDE_FROM_POINT;
-        contour.push_segment(self, flags);
-    }
-
-    fn offset_once(&self, distance: f32) -> Segment {
-        if self.is_line() {
-            return Segment::line(self.baseline.offset(distance));
-        }
-
-        if self.is_quadratic() {
-            let mut segment_0 = LineSegment2F::new(self.baseline.from(), self.ctrl.from());
-            let mut segment_1 = LineSegment2F::new(self.ctrl.from(), self.baseline.to());
-            segment_0 = segment_0.offset(distance);
-            segment_1 = segment_1.offset(distance);
-            let ctrl = match segment_0.intersection_t(segment_1) {
-                Some(t) => segment_0.sample(t),
-                None => segment_0.to().lerp(segment_1.from(), 0.5),
-            };
-            let baseline = LineSegment2F::new(segment_0.from(), segment_1.to());
-            return Segment::quadratic(baseline, ctrl);
-        }
-
-        debug_assert!(self.is_cubic());
-
-        if self.baseline.from() == self.ctrl.from() {
-            let mut segment_0 = LineSegment2F::new(self.baseline.from(), self.ctrl.to());
-            let mut segment_1 = LineSegment2F::new(self.ctrl.to(), self.baseline.to());
-            segment_0 = segment_0.offset(distance);
-            segment_1 = segment_1.offset(distance);
-            let ctrl = match segment_0.intersection_t(segment_1) {
-                Some(t) => segment_0.sample(t),
-                None => segment_0.to().lerp(segment_1.from(), 0.5),
-            };
-            let baseline = LineSegment2F::new(segment_0.from(), segment_1.to());
-            let ctrl = LineSegment2F::new(segment_0.from(), ctrl);
-            return Segment::cubic(baseline, ctrl);
-        }
-
-        if self.ctrl.to() == self.baseline.to() {
-            let mut segment_0 = LineSegment2F::new(self.baseline.from(), self.ctrl.from());
-            let mut segment_1 = LineSegment2F::new(self.ctrl.from(), self.baseline.to());
-            segment_0 = segment_0.offset(distance);
-            segment_1 = segment_1.offset(distance);
-            let ctrl = match segment_0.intersection_t(segment_1) {
-                Some(t) => segment_0.sample(t),
-                None => segment_0.to().lerp(segment_1.from(), 0.5),
-            };
-            let baseline = LineSegment2F::new(segment_0.from(), segment_1.to());
-            let ctrl = LineSegment2F::new(ctrl, segment_1.to());
-            return Segment::cubic(baseline, ctrl);
-        }
-
-        let mut segment_0 = LineSegment2F::new(self.baseline.from(), self.ctrl.from());
-        let mut segment_1 = LineSegment2F::new(self.ctrl.from(), self.ctrl.to());
-        let mut segment_2 = LineSegment2F::new(self.ctrl.to(), self.baseline.to());
-        segment_0 = segment_0.offset(distance);
-        segment_1 = segment_1.offset(distance);
-        segment_2 = segment_2.offset(distance);
-        let (ctrl_0, ctrl_1) = match (
-            segment_0.intersection_t(segment_1),
-            segment_1.intersection_t(segment_2),
-        ) {
-            (Some(t0), Some(t1)) => (segment_0.sample(t0), segment_1.sample(t1)),
-            _ => (
-                segment_0.to().lerp(segment_1.from(), 0.5),
-                segment_1.to().lerp(segment_2.from(), 0.5),
-            ),
-        };
-        let baseline = LineSegment2F::new(segment_0.from(), segment_2.to());
-        let ctrl = LineSegment2F::new(ctrl_0, ctrl_1);
-        Segment::cubic(baseline, ctrl)
-    }
-
-    fn error_is_within_tolerance(&self, other: &Segment, distance: f32) -> bool {
-        let (mut min, mut max) = (
-            f32::abs(distance) - TOLERANCE,
-            f32::abs(distance) + TOLERANCE,
-        );
-        min = if min <= 0.0 { 0.0 } else { min * min };
-        max = if max <= 0.0 { 0.0 } else { max * max };
-
-        for t_num in 0..(SAMPLE_COUNT + 1) {
-            let t = t_num as f32 / SAMPLE_COUNT as f32;
-            // FIXME(pcwalton): Use signed distance!
-            let (this_p, other_p) = (self.sample(t), other.sample(t));
-            let vector = this_p - other_p;
-            let square_distance = vector.square_length();
-            if square_distance < min || square_distance > max {
-                return false;
-            }
-        }
-
-        return true;
-
-        const SAMPLE_COUNT: u32 = 16;
-    }
-}
-
-#[cfg(feature = "svg")]
-struct ContourStrokeToFill<'a> {
-    input: &'a Contour,
-    output: Contour,
-    radius: f32,
-    join: LineJoin,
-}
-
-#[cfg(feature = "svg")]
-impl<'a> ContourStrokeToFill<'a> {
-    #[inline]
-    fn new(input: &Contour, output: Contour, radius: f32, join: LineJoin) -> ContourStrokeToFill {
-        ContourStrokeToFill {
-            input,
-            output,
-            radius,
-            join,
-        }
-    }
-
-    fn offset_forward(&mut self) {
-        for (segment_index, segment) in self.input.iter().enumerate() {
-            // FIXME(pcwalton): We negate the radius here so that round end caps can be drawn
-            // clockwise. Of course, we should just implement anticlockwise arcs to begin with...
-            let join = if segment_index == 0 {
-                LineJoin::Bevel
-            } else {
-                self.join
-            };
-            segment.offset(-self.radius, join, &mut self.output);
-        }
-    }
-
-    fn offset_backward(&mut self) {
-        let mut segments: Vec<_> = self
-            .input
-            .iter()
-            .map(|segment| segment.reversed())
-            .collect();
-        segments.reverse();
-        for (segment_index, segment) in segments.iter().enumerate() {
-            // FIXME(pcwalton): We negate the radius here so that round end caps can be drawn
-            // clockwise. Of course, we should just implement anticlockwise arcs to begin with...
-            let join = if segment_index == 0 {
-                LineJoin::Bevel
-            } else {
-                self.join
-            };
-            segment.offset(-self.radius, join, &mut self.output);
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-pub struct OutlineStrokeToFill<'a> {
-    input: &'a Outline,
-    output: Outline,
-    style: StrokeStyle,
-}
-
-#[cfg(feature = "svg")]
-impl<'a> OutlineStrokeToFill<'a> {
-    /// Creates a new `OutlineStrokeToFill` object that will stroke the given outline with the
-    /// given stroke style.
-    #[inline]
-    pub fn new(input: &Outline, style: StrokeStyle) -> OutlineStrokeToFill {
-        OutlineStrokeToFill {
-            input,
-            output: Outline::new(),
-            style,
-        }
-    }
-
-    /// Performs the stroke operation.
-    pub fn offset(&mut self) {
-        let mut new_contours = vec![];
-        for input in &self.input.contours {
-            let closed = input.closed;
-            let mut stroker = ContourStrokeToFill::new(
-                input,
-                Contour::new(),
-                self.style.line_width * 0.5,
-                self.style.line_join,
-            );
-
-            stroker.offset_forward();
-            if closed {
-                self.push_stroked_contour(&mut new_contours, stroker, true);
-                stroker = ContourStrokeToFill::new(
-                    input,
-                    Contour::new(),
-                    self.style.line_width * 0.5,
-                    self.style.line_join,
-                );
-            } else {
-                self.add_cap(&mut stroker.output);
-            }
-
-            stroker.offset_backward();
-            if !closed {
-                self.add_cap(&mut stroker.output);
-            }
-
-            self.push_stroked_contour(&mut new_contours, stroker, closed);
-        }
-
-        let mut new_bounds = None;
-        new_contours
-            .iter()
-            .for_each(|contour| contour.update_bounds(&mut new_bounds));
-
-        self.output.contours = new_contours;
-        self.output.bounds = new_bounds.unwrap_or_default();
-    }
-
-    /// Returns the resulting stroked outline. This should be called after `offset()`.
-    #[inline]
-    pub fn into_outline(self) -> Outline {
-        self.output
-    }
-
-    fn push_stroked_contour(
-        &mut self,
-        new_contours: &mut Vec<Contour>,
-        mut stroker: ContourStrokeToFill,
-        closed: bool,
-    ) {
-        // Add join if necessary.
-        if closed && stroker.output.might_need_join(self.style.line_join) {
-            let (p1, p0) = (stroker.output.position_of(1), stroker.output.position_of(0));
-            let final_segment = LineSegment2F::new(p1, p0);
-            stroker.output.add_join(
-                self.style.line_width * 0.5,
-                self.style.line_join,
-                stroker.input.position_of(0),
-                final_segment,
-            );
-        }
-
-        stroker.output.closed = true;
-        new_contours.push(stroker.output);
-    }
-
-    fn add_cap(&mut self, contour: &mut Contour) {
-        if self.style.line_cap == LineCap::Butt || contour.len() < 2 {
-            return;
-        }
-
-        let width = self.style.line_width;
-        let p1 = contour.position_of_last(1);
-
-        // Determine the ending gradient.
-        let mut p0;
-        let mut p0_index = contour.len() - 2;
-        loop {
-            p0 = contour.position_of(p0_index);
-            if (p1 - p0).square_length() > EPSILON {
-                break;
-            }
-            if p0_index == 0 {
-                return;
-            }
-            p0_index -= 1;
-        }
-        let gradient = (p1 - p0).normalize();
-
-        match self.style.line_cap {
-            LineCap::Butt => unreachable!(),
-
-            LineCap::Square => {
-                let offset = gradient * (width * 0.5);
-
-                let p2 = p1 + offset;
-                let p3 = p2 + gradient.yx() * vec2f(-width, width);
-                let p4 = p3 - offset;
-
-                contour.push_endpoint(p2);
-                contour.push_endpoint(p3);
-                contour.push_endpoint(p4);
-            }
-
-            LineCap::Round => {
-                let scale = width * 0.5;
-                let offset = gradient.yx() * vec2f(-1.0, 1.0);
-                let translation = p1 + offset * (width * 0.5);
-                let transform = Transform2F::from_scale(scale).translate(translation);
-                let chord = LineSegment2F::new(-offset, offset);
-                contour.push_arc_from_unit_chord(&transform, chord, ArcDirection::CW);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "svg")]
-fn render_node(node: &usvg::Node, scene: &mut Scene, global_transform: Transform2F) {
-    match node {
-        usvg::Node::Path(ref p) => {
-            let t = node.abs_transform();
-            let mut transform = global_transform;
-
-            transform *= Transform2F {
-                matrix: Matrix2x2F::row_major(t.sx, t.ky, t.kx, t.sy),
-                vector: Vector2F::new(t.tx, t.ty),
-            };
-
-            let mut path = Path2D::new();
-            for segment in p.data().segments() {
-                match segment {
-                    PathSegment::MoveTo(Point { x, y }) => {
-                        path.move_to(vec2f(x as f32, y as f32));
-                    }
-                    PathSegment::LineTo(Point { x, y }) => {
-                        path.line_to(vec2f(x as f32, y as f32));
-                    }
-                    PathSegment::CubicTo(
-                        Point { x: x1, y: y1 },
-                        Point { x: x2, y: y2 },
-                        Point { x, y },
-                    ) => {
-                        path.bezier_curve_to(
-                            vec2f(x1 as f32, y1 as f32),
-                            vec2f(x2 as f32, y2 as f32),
-                            vec2f(x as f32, y as f32),
-                        );
-                    }
-                    PathSegment::QuadTo(Point { x: x1, y: y1 }, Point { x: x2, y: y2 }) => {
-                        path.quadratic_curve_to(
-                            vec2f(x1 as f32, y1 as f32),
-                            vec2f(x2 as f32, y2 as f32),
-                        );
-                    }
-                    PathSegment::Close => {
-                        path.close_path();
-                    }
-                }
-            }
-
-            if let Some(ref f) = p.fill() {
-                if let usvg::Paint::Color(color) = f.paint() {
-                    push_path(
-                        scene,
-                        &transform,
-                        path,
-                        &color_u8!(color.red, color.green, color.blue, f.opacity().to_u8()),
-                    );
-                }
-            }
-
-            if let Some(ref s) = p.stroke() {
-                if let usvg::Paint::Color(color) = s.paint() {
-                    let stroke_style = StrokeStyle {
-                        line_width: f32::max(s.width().get(), HAIRLINE_STROKE_WIDTH),
-                        line_cap: LineCap::from_usvg_line_cap(s.linecap()),
-                        line_join: LineJoin::from_usvg_line_join(
-                            s.linejoin(),
-                            s.miterlimit().get(),
-                        ),
-                    };
-
-                    let path = UsvgPathToSegments::new(p.data().segments());
-                    let mut outline = Outline::from_segments(path);
-
-                    if let Some(ref dash_array) = s.dasharray() {
-                        let dash_array: Vec<f32> = dash_array.iter().map(|&x| x as f32).collect();
-                        let mut dash = OutlineDash::new(&outline, &dash_array, s.dashoffset());
-                        dash.dash();
-                        outline = dash.into_outline();
-                    }
-
-                    let mut stroke_to_fill = OutlineStrokeToFill::new(&outline, stroke_style);
-                    stroke_to_fill.offset();
-                    let outline = stroke_to_fill.into_outline();
-
-                    let mut path = Path2D::new();
-                    path.outline = outline;
-                    push_path(
-                        scene,
-                        &transform,
-                        path,
-                        &color_u8!(color.red, color.green, color.blue, s.opacity().to_u8()),
-                    );
-                }
-            }
-        }
-        usvg::Node::Group(ref g) => {
-            render_nodes(g, scene, global_transform);
-        }
-        _ => {}
-    }
-}
-
-#[cfg(feature = "svg")]
-pub fn render_nodes(group: &usvg::Group, scene: &mut Scene, global_transform: Transform2F) {
-    for child in group.children() {
-        render_node(&child, scene, global_transform);
     }
 }
