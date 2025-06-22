@@ -34,7 +34,7 @@ async fn main() {
     let mut framebuffer_size = screen_size();
 
     let context = unsafe { get_internal_gl().quad_context };
-    let mut renderer = Renderer::new(context, framebuffer_size, color_u8!(77, 77, 82, 255));
+    let mut renderer = Renderer::new(context, framebuffer_size);
 
     let mut saved_width = 0.0;
     let mut saved_height = 0.0;

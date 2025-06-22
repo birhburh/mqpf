@@ -916,7 +916,7 @@ fn round_rect_out_to_tile_bounds(rect: RectF) -> RectI {
 
 fn process_segment(
     segment: &Segment,
-    view_box: RectI,
+    view_box: RectF,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
@@ -972,7 +972,7 @@ fn process_segment(
 
 fn process_line_segment(
     line_segment: LineSegment2F,
-    view_box: RectI,
+    view_box: RectF,
     next_alpha_tile_index: &mut usize,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
@@ -980,8 +980,8 @@ fn process_line_segment(
     path_tile_bounds: &RectI,
 ) {
     let clip_box = RectF::from_points(
-        vec2f(view_box.min_x() as f32, f32::NEG_INFINITY),
-        view_box.lower_right().to_f32(),
+        vec2f(view_box.min_x(), f32::NEG_INFINITY),
+        view_box.lower_right(),
     );
     let line_segment = match clip_line_segment_to_rect(line_segment, clip_box) {
         None => return,
@@ -1295,8 +1295,7 @@ fn clip_line_segment_to_rect(
 /// Main lib object that stores data necessary to render a scene.
 pub struct Renderer<'a> {
     ctx: &'a mut dyn RenderingBackend,
-    viewport: RectI,
-    background_color: Color,
+    viewport: RectF,
 
     paths: Vec<Path>,
     colors: Vec<Color>,
@@ -1330,11 +1329,10 @@ impl<'a> Renderer<'a> {
     pub fn new(
         ctx: &'a mut dyn RenderingBackend,
         framebuffer_size: (f32, f32),
-        background_color: Color,
     ) -> Renderer<'a> {
-        let viewport = RectI::new(
-            vec2i(0, 0),
-            vec2i(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
+        let viewport = RectF::new(
+            vec2f(0.0, 0.0),
+            vec2f(framebuffer_size.0, framebuffer_size.1),
         );
 
         let quad_vertex_positions_buffer = ctx.new_buffer(
@@ -1530,8 +1528,6 @@ impl<'a> Renderer<'a> {
 
             viewport,
 
-            background_color,
-
             retained_paths: HashMap::new(),
 
             paths: vec![],
@@ -1560,7 +1556,6 @@ impl<'a> Renderer<'a> {
             pending_fills: vec![],
             all_tiles: vec![],
 
-            // mask_to_screen: true,
             mask_to_screen: false,
             mask_background: true,
             tiles_to_screen: true,
@@ -1568,9 +1563,9 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn update_viewport(&mut self, framebuffer_size: (f32, f32)) {
-        self.viewport = RectI::new(
-            vec2i(0, 0),
-            vec2i(framebuffer_size.0 as i32, framebuffer_size.1 as i32),
+        self.viewport = RectF::new(
+            vec2f(0.0, 0.0),
+            vec2f(framebuffer_size.0, framebuffer_size.1),
         );
         self.retained_paths.clear();
     }
@@ -1858,14 +1853,7 @@ impl<'a> Renderer<'a> {
 
         self.ensure_index_buffer(self.all_tiles.len());
 
-        let clear_color = self.background_color;
-        let mut action = PassAction::Nothing;
-        if !self.mask_background {
-            action =
-                PassAction::clear_color(clear_color.r, clear_color.g, clear_color.b, clear_color.a)
-        };
-
-        self.ctx.begin_default_pass(action);
+        self.ctx.begin_default_pass(PassAction::Nothing);
         self.ctx.apply_pipeline(&self.tile_pipeline);
         self.ctx.apply_bindings(&self.tile_bindings);
 
@@ -1963,8 +1951,8 @@ impl<'a> Renderer<'a> {
     }
 
     fn tile_transform(&self) -> Transform4F {
-        let draw_viewport = self.viewport.size().to_f32();
-        let scale = Vector4F::new(2.0 / draw_viewport.x(), -2.0 / draw_viewport.y(), 1.0, 1.0);
+        let viewport_size = self.viewport.size();
+        let scale = Vector4F::new(2.0 / viewport_size.x(), -2.0 / viewport_size.y(), 1.0, 1.0);
         Transform4F::from_scale(scale).translate(Vector4F::new(-1.0, 1.0, 0.0, 1.0))
     }
 }
