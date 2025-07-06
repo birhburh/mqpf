@@ -6,7 +6,7 @@ extern crate bitflags;
 use {
     macroquad::{
         miniquad::{
-            Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferId, BufferLayout,
+            Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferLayout,
             BufferSource, BufferType, BufferUsage, Equation, PassAction, Pipeline,
             RenderingBackend, ShaderMeta, TextureFormat, TextureId, TextureParams,
             UniformBlockLayout, UniformsSource, VertexAttribute, VertexFormat, VertexStep,
@@ -820,7 +820,7 @@ pub struct Path {
 #[repr(C)]
 struct Fill {
     line_segment: LineSegment2F,
-    link: f32,
+    fill_index: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -939,7 +939,8 @@ fn process_line_segment(
     let mut t_max = (first_tile_crossing - line_segment.from()) / vector;
     let t_delta = (tile_size / vector).0.abs();
 
-    let (mut current_position, mut tile_coords) = (line_segment.from(), from_tile_coords);
+    let mut current_position = line_segment.from();
+    let mut tile_coords = from_tile_coords;
     let mut last_step_direction = None;
 
     loop {
@@ -1059,12 +1060,13 @@ fn add_fill(
         next_alpha_tile_index,
         tile_coords,
     );
+    println!("fill_index: {}", alpha_tile_id.0);
     fills.push(Fill {
         line_segment: LineSegment2F::new(
             Vector2F::new(from_x as f32, from_y as f32),
             Vector2F::new(to_x as f32, to_y as f32),
         ),
-        link: alpha_tile_id.0,
+        fill_index: alpha_tile_id.0,
     });
 }
 
@@ -1246,8 +1248,6 @@ pub struct Renderer<'a> {
     mask_background_bindings: Bindings,
     tile_pipeline: Pipeline,
     tile_bindings: Bindings,
-    tiles_vertex_indices_buffer: Option<BufferId>,
-    tiles_vertex_indices_length: usize,
 
     fills: Vec<Fill>,
     tiles: Vec<Tile>,
@@ -1473,9 +1473,6 @@ impl<'a> Renderer<'a> {
             paths: vec![],
             colors: vec![],
             color_cache: HashMap::default(),
-
-            tiles_vertex_indices_buffer: None,
-            tiles_vertex_indices_length: 0,
 
             texture_metadata_texture,
             mask_img,
@@ -1731,8 +1728,6 @@ impl<'a> Renderer<'a> {
             BufferSource::slice(&self.tiles),
         );
 
-        self.ensure_index_buffer(self.tiles.len());
-
         self.ctx.begin_default_pass(PassAction::Nothing);
         self.ctx.apply_pipeline(&self.tile_pipeline);
         self.ctx.apply_bindings(&self.tile_bindings);
@@ -1758,35 +1753,6 @@ impl<'a> Renderer<'a> {
 
         self.ctx.delete_buffer(self.tile_bindings.vertex_buffers[1]);
         self.tile_bindings.vertex_buffers[1] = old_tile_vertex_buffer_id;
-    }
-
-    fn ensure_index_buffer(&mut self, mut length: usize) {
-        length = length.next_power_of_two();
-        if self.tiles_vertex_indices_length >= length {
-            return;
-        }
-        let mut indices: Vec<u16> = Vec::with_capacity(length * 6);
-        for index in 0..(length as u16) {
-            indices.extend_from_slice(&[
-                index * 4,
-                index * 4 + 1,
-                index * 4 + 2,
-                index * 4 + 1,
-                index * 4 + 3,
-                index * 4 + 2,
-            ]);
-        }
-
-        if let Some(tiles_vertex_indices_buffer) = self.tiles_vertex_indices_buffer.take() {
-            self.ctx.delete_buffer(tiles_vertex_indices_buffer);
-        }
-        let tiles_vertex_indices_buffer = self.ctx.new_buffer(
-            BufferType::IndexBuffer,
-            BufferUsage::Immutable,
-            BufferSource::slice(&indices),
-        );
-        self.tiles_vertex_indices_buffer = Some(tiles_vertex_indices_buffer);
-        self.tiles_vertex_indices_length = length;
     }
 
     fn tile_transform(&self) -> Transform4F {

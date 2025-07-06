@@ -36,15 +36,14 @@ vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord) {
 }
 
 void main() {
-    vec2 tileOrigin = vec2(aTileOrigin), tileOffset = vec2(aTileOffset);
-    vec2 position = (tileOrigin + tileOffset) * uTileSize;
+    vec2 position = (aTileOrigin + aTileOffset) * uTileSize;
 
     int aMaskTexCoord_z = int(mod(aMaskTexCoord / 65536.0, 256.0));
     int aMaskTexCoord_y = int(mod(aMaskTexCoord / 256.0, 256.0));
     int aMaskTexCoord_x = int(mod(aMaskTexCoord, 256.0));
 
     vec2 maskTileCoord = vec2(aMaskTexCoord_x, aMaskTexCoord_y + 256 * aMaskTexCoord_z);
-    vec2 maskTexCoord0 = (vec2(maskTileCoord) + tileOffset) * uTileSize;
+    vec2 maskTexCoord0 = (maskTileCoord + aTileOffset) * uTileSize;
 
     // aMaskTexCoord != INVALID
     if (aCtrlBackdrop == 0.0 && abs(aMaskTexCoord - 65536.0) < 0.00001) {
@@ -57,6 +56,6 @@ void main() {
     vec4 baseColor       = fetchUnscaled(uTextureMetadata, metadataScale, metadataEntryCoord);
     vBaseColor = baseColor;
 
-    vMaskTexCoord0 = vec3(maskTexCoord0, float(aCtrlBackdrop));
+    vMaskTexCoord0 = vec3(maskTexCoord0, aCtrlBackdrop);
     gl_Position = uTransform * vec4(position, 0.0, 1.0);
 }

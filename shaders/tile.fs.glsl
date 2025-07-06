@@ -46,7 +46,7 @@ float sampleMask(sampler2D maskTexture,
                  vec2 maskTextureSize,
                  vec3 maskTexCoord) {
     vec2 maskTexCoordI = floor(maskTexCoord.xy);
-    vec4 texel = texture2D(maskTexture, (vec2(floor(maskTexCoordI / vec2(1, 4))) + 0.5) / maskTextureSize);
+    vec4 texel = texture2D(maskTexture, (floor(maskTexCoordI / vec2(1, 4)) + 0.5) / maskTextureSize);
     float coverage;
     int index = int(mod(maskTexCoordI.y, 4.0));
 

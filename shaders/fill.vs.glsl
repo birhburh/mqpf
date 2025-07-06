@@ -24,9 +24,9 @@ varying vec2 vFrom;
 varying vec2 vTo;
 
 vec2 computeTileOffset(float tileIndex, float stencilTextureWidth, vec2 tileSize) {
-    float tilesPerRow = float(stencilTextureWidth / tileSize.x);
+    float tilesPerRow = stencilTextureWidth / tileSize.x;
     vec2 tileOffset = vec2(mod(tileIndex, tilesPerRow), floor(tileIndex / tilesPerRow));
-    return vec2(tileOffset) * tileSize * vec2(1.0, 0.25);
+    return tileOffset * tileSize * vec2(1.0, 0.25);
 }
 
 vec4 computeVertexPosition(float tileIndex,
@@ -36,9 +36,9 @@ vec4 computeVertexPosition(float tileIndex,
                            vec2 framebufferSize,
                            out vec2 outFrom,
                            out vec2 outTo) {
-    vec2 tileOrigin = computeTileOffset(float(tileIndex), framebufferSize.x, tileSize);
+    vec2 tileOrigin = computeTileOffset(tileIndex, framebufferSize.x, tileSize);
 
-    vec4 lineSegment = vec4(packedLineSegment) / 256.0;
+    vec4 lineSegment = packedLineSegment / 256.0;
     vec2 from = lineSegment.xy, to = lineSegment.zw;
 
     vec2 position;
@@ -70,14 +70,14 @@ void main() {
     // vec4 aLineSegment = aLineSegment;
     // float aTileIndex = aTileIndex;
     // gl_Position = vec4(aTessCoord, 0.0, 1.0);
-    // computeVertexPosition(float(aTileIndex),
-    //                             aTessCoord,
-    //                             aLineSegment,
-    //                             uTileSize,
-    //                             uFramebufferSize,
-    //                             vFrom,
-    //                             vTo);
-    gl_Position = computeVertexPosition(float(aTileIndex),
+    // computeVertexPosition(aTileIndex,
+    //                       aTessCoord,
+    //                       aLineSegment,
+    //                       uTileSize,
+    //                       uFramebufferSize,
+    //                       vFrom,
+    //                       vTo);
+    gl_Position = computeVertexPosition(aTileIndex,
                                         aTessCoord,
                                         aLineSegment,
                                         uTileSize,
