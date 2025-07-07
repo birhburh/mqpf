@@ -38,10 +38,13 @@ vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord) {
 void main() {
     vec2 position = (aTileOrigin + aTileOffset) * uTileSize;
 
+    // depacking 3 ints from aMaskTexCoord
+    // aMaskTexCoord_z - page num in mask texture
     int aMaskTexCoord_z = int(mod(aMaskTexCoord / 65536.0, 256.0));
     int aMaskTexCoord_y = int(mod(aMaskTexCoord / 256.0, 256.0));
     int aMaskTexCoord_x = int(mod(aMaskTexCoord, 256.0));
 
+    // 256 here - size of mask page
     vec2 maskTileCoord = vec2(aMaskTexCoord_x, aMaskTexCoord_y + 256 * aMaskTexCoord_z);
     vec2 maskTexCoord0 = (maskTileCoord + aTileOffset) * uTileSize;
 

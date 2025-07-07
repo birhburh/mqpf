@@ -6,10 +6,10 @@ extern crate bitflags;
 use {
     macroquad::{
         miniquad::{
-            Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferLayout,
-            BufferSource, BufferType, BufferUsage, Equation, PassAction, Pipeline,
-            RenderingBackend, ShaderMeta, TextureFormat, TextureId, TextureParams,
-            UniformBlockLayout, UniformsSource, VertexAttribute, VertexFormat, VertexStep,
+            Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferLayout, BufferSource,
+            BufferType, BufferUsage, Equation, PassAction, Pipeline, RenderingBackend, ShaderMeta,
+            TextureFormat, TextureId, TextureParams, UniformBlockLayout, UniformsSource,
+            VertexAttribute, VertexFormat, VertexStep,
         },
         prelude::*,
         ui::Id,
@@ -72,6 +72,9 @@ pub struct Path2D {
     pub contours: Vec<Contour>,
     pub bounds: RectF,
     current_contour: isize,
+    fills: Vec<Fill>,
+    tiles: Vec<Tile>,
+    used_mask_tiles: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,6 +91,9 @@ impl Path2D {
             contours: vec![],
             bounds: RectF::default(),
             current_contour: -1,
+            fills: vec![],
+            tiles: vec![],
+            used_mask_tiles: vec![],
         }
     }
 
@@ -825,10 +831,10 @@ struct Fill {
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 #[repr(C)]
-struct AlphaTileId(f32);
+struct MaskTileId(f32);
 
-impl AlphaTileId {
-    const INVALID: AlphaTileId = AlphaTileId(0xFFFFFF as u32 as f32);
+impl MaskTileId {
+    const INVALID: MaskTileId = MaskTileId(0xFFFFFF as u32 as f32);
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -836,7 +842,7 @@ impl AlphaTileId {
 struct Tile {
     tile_x: f32,
     tile_y: f32,
-    mask_tex_coord: AlphaTileId,
+    mask_tex_coord: MaskTileId,
     color: f32,
     backdrop: f32,
 }
@@ -850,7 +856,9 @@ fn round_rect_out_to_tile_bounds(rect: RectF) -> RectI {
 fn process_segment(
     segment: &Segment,
     view_box: RectF,
-    next_alpha_tile_index: &mut usize,
+    next_mask_tile_index: &mut usize,
+    used_mask_tiles: &mut Vec<(usize, usize)>,
+    path_used_mask_tiles: &mut Vec<usize>,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
     tiles: &mut Vec<Tile>,
@@ -861,7 +869,9 @@ fn process_segment(
         return process_segment(
             &cubic,
             view_box,
-            next_alpha_tile_index,
+            next_mask_tile_index,
+            used_mask_tiles,
+            path_used_mask_tiles,
             fills,
             backdrops,
             tiles,
@@ -875,7 +885,9 @@ fn process_segment(
         return process_line_segment(
             segment.baseline,
             view_box,
-            next_alpha_tile_index,
+            next_mask_tile_index,
+            used_mask_tiles,
+            path_used_mask_tiles,
             fills,
             backdrops,
             tiles,
@@ -886,7 +898,9 @@ fn process_segment(
     process_segment(
         &prev,
         view_box,
-        next_alpha_tile_index,
+        next_mask_tile_index,
+        used_mask_tiles,
+        path_used_mask_tiles,
         fills,
         backdrops,
         tiles,
@@ -895,7 +909,9 @@ fn process_segment(
     process_segment(
         &next,
         view_box,
-        next_alpha_tile_index,
+        next_mask_tile_index,
+        used_mask_tiles,
+        path_used_mask_tiles,
         fills,
         backdrops,
         tiles,
@@ -906,7 +922,9 @@ fn process_segment(
 fn process_line_segment(
     line_segment: LineSegment2F,
     view_box: RectF,
-    next_alpha_tile_index: &mut usize,
+    next_mask_tile_index: &mut usize,
+    used_mask_tiles: &mut Vec<(usize, usize)>,
+    path_used_mask_tiles: &mut Vec<usize>,
     fills: &mut Vec<Fill>,
     backdrops: &mut Vec<i32>,
     tiles: &mut Vec<Tile>,
@@ -972,7 +990,9 @@ fn process_line_segment(
             fills,
             tiles,
             path_tile_bounds,
-            next_alpha_tile_index,
+            next_mask_tile_index,
+            used_mask_tiles,
+            path_used_mask_tiles,
             clipped_line_segment,
             tile_coords,
         );
@@ -983,7 +1003,9 @@ fn process_line_segment(
                 fills,
                 tiles,
                 path_tile_bounds,
-                next_alpha_tile_index,
+                next_mask_tile_index,
+                used_mask_tiles,
+                path_used_mask_tiles,
                 auxiliary_segment,
                 tile_coords,
             );
@@ -996,15 +1018,17 @@ fn process_line_segment(
                 fills,
                 tiles,
                 path_tile_bounds,
-                next_alpha_tile_index,
+                next_mask_tile_index,
+                used_mask_tiles,
+                path_used_mask_tiles,
                 auxiliary_segment,
                 tile_coords,
             );
         }
         if step.x() < 0 && last_step_direction == Some(StepDirection::X) {
-            adjust_alpha_tile_backdrop(backdrops, tiles, path_tile_bounds, tile_coords, 1);
+            adjust_mask_tile_backdrop(backdrops, tiles, path_tile_bounds, tile_coords, 1);
         } else if step.x() > 0 && next_step_direction == Some(StepDirection::X) {
-            adjust_alpha_tile_backdrop(backdrops, tiles, path_tile_bounds, tile_coords, -1);
+            adjust_mask_tile_backdrop(backdrops, tiles, path_tile_bounds, tile_coords, -1);
         }
         match next_step_direction {
             None => break,
@@ -1033,7 +1057,9 @@ fn add_fill(
     fills: &mut Vec<Fill>,
     tiles: &mut Vec<Tile>,
     path_tile_bounds: &RectI,
-    next_alpha_tile_index: &mut usize,
+    next_mask_tile_index: &mut usize,
+    used_mask_tiles: &mut Vec<(usize, usize)>,
+    path_used_mask_tiles: &mut Vec<usize>,
     segment: LineSegment2F,
     tile_coords: Vector2I,
 ) {
@@ -1054,43 +1080,68 @@ fn add_fill(
     if from_x == to_x {
         return;
     }
-    let alpha_tile_id = get_or_allocate_alpha_tile_index(
+    let mask_tile_id = get_or_allocate_mask_tile_index(
         tiles,
         path_tile_bounds,
-        next_alpha_tile_index,
+        next_mask_tile_index,
+        used_mask_tiles,
+        path_used_mask_tiles,
         tile_coords,
     );
-    println!("fill_index: {}", alpha_tile_id.0);
     fills.push(Fill {
         line_segment: LineSegment2F::new(
             Vector2F::new(from_x as f32, from_y as f32),
             Vector2F::new(to_x as f32, to_y as f32),
         ),
-        fill_index: alpha_tile_id.0,
+        fill_index: mask_tile_id.0,
     });
 }
 
-fn get_or_allocate_alpha_tile_index(
+fn get_or_allocate_mask_tile_index(
     tiles: &mut Vec<Tile>,
     path_tile_bounds: &RectI,
-    next_alpha_tile_index: &mut usize,
+    next_mask_tile_index: &mut usize,
+    used_mask_tiles: &mut Vec<(usize, usize)>,
+    path_used_mask_tiles: &mut Vec<usize>,
     tile_coords: Vector2I,
-) -> AlphaTileId {
+) -> MaskTileId {
     let offset = tile_coords - path_tile_bounds.origin();
     let local_tile_index = (offset.x() + path_tile_bounds.width() * offset.y()) as usize;
 
-    if tiles[local_tile_index].mask_tex_coord != AlphaTileId::INVALID {
+    if tiles[local_tile_index].mask_tex_coord != MaskTileId::INVALID {
         return tiles[local_tile_index].mask_tex_coord;
     }
 
-    *next_alpha_tile_index += 1;
-    let new_alpha_tile_id = AlphaTileId(*next_alpha_tile_index as f32);
-    tiles[local_tile_index].mask_tex_coord = new_alpha_tile_id;
-    new_alpha_tile_id
+    // TODO: Rewrite to be more effective
+    let mut cur_used = 0;
+    while cur_used < used_mask_tiles.len() {
+        if *next_mask_tile_index + 1 < used_mask_tiles[cur_used].0 {
+            *next_mask_tile_index += 1;
+            path_used_mask_tiles.push(*next_mask_tile_index);
+            break;
+        } else if *next_mask_tile_index + 1 == used_mask_tiles[cur_used].0 {
+            *next_mask_tile_index = used_mask_tiles[cur_used].1 + 1;
+            path_used_mask_tiles.push(*next_mask_tile_index);
+            cur_used += 1;
+            break;
+        } else if *next_mask_tile_index + 1 > used_mask_tiles[cur_used].1 {
+            cur_used += 1;
+        } else {
+            unreachable!()
+        }
+    }
+    if cur_used == used_mask_tiles.len() {
+        *next_mask_tile_index += 1;
+        path_used_mask_tiles.push(*next_mask_tile_index);
+    }
+
+    let new_mask_tile_id = MaskTileId(*next_mask_tile_index as f32);
+    tiles[local_tile_index].mask_tex_coord = new_mask_tile_id;
+    new_mask_tile_id
 }
 
 #[inline]
-fn adjust_alpha_tile_backdrop(
+fn adjust_mask_tile_backdrop(
     backdrops: &mut Vec<i32>,
     tiles: &mut Vec<Tile>,
     path_tile_bounds: &RectI,
@@ -1248,6 +1299,8 @@ pub struct Renderer<'a> {
     mask_background_bindings: Bindings,
     tile_pipeline: Pipeline,
     tile_bindings: Bindings,
+
+    used_mask_tiles: Vec<(usize, usize)>,
 
     fills: Vec<Fill>,
     tiles: Vec<Tile>,
@@ -1485,6 +1538,8 @@ impl<'a> Renderer<'a> {
             tile_pipeline,
             tile_bindings,
 
+            used_mask_tiles: vec![],
+
             fills: vec![],
             tiles: vec![],
 
@@ -1548,22 +1603,16 @@ impl<'a> Renderer<'a> {
     pub fn render(&mut self) {
         let transform = Transform2F::default();
 
-        let mut next_alpha_tile_index = 0;
-
+        let mut next_mask_tile_index = 0;
         let palette = self.colors.clone();
         self.upload_palette(&palette);
 
-        let mut tiles = Vec::with_capacity(1000);
-        let changed = self
-            .retained_paths
-            .iter()
-            .any(|(_, p)| p.contours.iter().any(|c| c.changed));
-        dbg!(changed);
-        if changed {
-            self.tiles.clear();
-        }
+        let mut path_tiles = Vec::with_capacity(1000);
+        let mut path_used_mask_tiles = Vec::with_capacity(1000);
+        self.tiles.clear();
+        self.fills.clear();
+        self.used_mask_tiles.clear();
         for scene_path in &self.paths {
-            dbg!(scene_path.path_id);
             if let Entry::Occupied(path) = self.retained_paths.entry(scene_path.path_id) {
                 let path = path.into_mut();
                 path.close_all_contours();
@@ -1573,40 +1622,144 @@ impl<'a> Renderer<'a> {
 
                 for y in path_tile_bounds.min_y()..path_tile_bounds.max_y() {
                     for x in path_tile_bounds.min_x()..path_tile_bounds.max_x() {
-                        tiles.push(Tile {
+                        path_tiles.push(Tile {
                             tile_x: x as f32,
                             tile_y: y as f32,
-                            mask_tex_coord: AlphaTileId::INVALID,
+                            mask_tex_coord: MaskTileId::INVALID,
                             color: scene_path.paint_id.0 as f32,
                             backdrop: 0.0,
                         });
                     }
                 }
 
-                let mut fills = Vec::with_capacity(
+                let mut path_fills = Vec::with_capacity(
                     path_tile_bounds.size().x() as usize * path_tile_bounds.size().y() as usize,
                 );
                 let mut backdrops = vec![0; path_tile_bounds.width() as usize];
 
+                let mut changed = false;
                 for contour in &path.contours {
-                    dbg!(contour.changed);
                     if contour.changed {
+                        changed = true;
                         for segment in contour.iter() {
                             process_segment(
                                 &segment,
                                 self.viewport,
-                                &mut next_alpha_tile_index,
-                                &mut fills,
+                                &mut next_mask_tile_index,
+                                &mut self.used_mask_tiles,
+                                &mut path_used_mask_tiles,
+                                &mut path_fills,
                                 &mut backdrops,
-                                &mut tiles,
+                                &mut path_tiles,
                                 &path_tile_bounds,
                             );
                         }
                     }
                 }
+                if changed {
+                    let mut cur_used = 0;
+                    let mut path_cur_used = 0;
+                    // TODO: Rewrite to be more effective
+                    while path_cur_used < path.used_mask_tiles.len() {
+                        if path.used_mask_tiles[path_cur_used] == self.used_mask_tiles[cur_used].0 {
+                            self.used_mask_tiles[cur_used].0 += 1;
+                            if self.used_mask_tiles[cur_used].0 > self.used_mask_tiles[cur_used].1 {
+                                self.used_mask_tiles.remove(cur_used);
+                            }
+                            path_cur_used += 1;
+                        } else if path.used_mask_tiles[path_cur_used]
+                            > self.used_mask_tiles[cur_used].0
+                        {
+                            if path.used_mask_tiles[path_cur_used]
+                                <= self.used_mask_tiles[cur_used].1
+                            {
+                                self.used_mask_tiles.insert(
+                                    cur_used + 1,
+                                    (
+                                        path.used_mask_tiles[path_cur_used] + 1,
+                                        self.used_mask_tiles[cur_used].1,
+                                    ),
+                                );
+                                self.used_mask_tiles[cur_used].1 = path.used_mask_tiles[path_cur_used] - 1;
+                                cur_used += 1;
+                                path_cur_used += 1;
+                            } else {
+                                path_cur_used += 1;
+                            }
+                        } else {
+                            path_cur_used += 1;
+                        }
+                    }
+
+                    path.used_mask_tiles = path_used_mask_tiles.clone();
+                    path.tiles = path_tiles.clone();
+                    path.fills = path_fills.clone();
+                } else {
+                    path_tiles = path.tiles.clone();
+                    path_fills = path.fills.clone();
+                    path_used_mask_tiles = path.used_mask_tiles.clone();
+                }
+
+                let mut cur_used = 0;
+                let mut path_cur_used = 0;
+                // TODO: Rewrite to be more effective
+                while path_cur_used < path_used_mask_tiles.len() {
+                    if cur_used < self.used_mask_tiles.len() {
+                        if path_used_mask_tiles[path_cur_used]
+                            < self.used_mask_tiles[cur_used].0
+                        {
+                            self.used_mask_tiles.insert(
+                                cur_used,
+                                (
+                                    path_used_mask_tiles[path_cur_used],
+                                    path_used_mask_tiles[path_cur_used],
+                                ),
+                            );
+                            path_cur_used += 1;
+                        } else if path_used_mask_tiles[path_cur_used]
+                            > self.used_mask_tiles[cur_used].0
+                        {
+                            if path_used_mask_tiles[path_cur_used]
+                                <= self.used_mask_tiles[cur_used].1
+                            {
+                                unreachable!()
+                            } else {
+                                if path_used_mask_tiles[path_cur_used]
+                                    == self.used_mask_tiles[cur_used].1 + 1
+                                {
+                                    self.used_mask_tiles[cur_used].1 =
+                                        path_used_mask_tiles[path_cur_used];
+                                    path_cur_used += 1;
+                                } else {
+                                    cur_used += 1;
+                                }
+                            }
+                        } else {
+                            unreachable!()
+                        }
+
+                        if cur_used + 1 < self.used_mask_tiles.len()
+                            && self.used_mask_tiles[cur_used].1
+                                == self.used_mask_tiles[cur_used + 1].0 - 1
+                        {
+                            self.used_mask_tiles[cur_used].1 =
+                                self.used_mask_tiles[cur_used + 1].1;
+                            self.used_mask_tiles.remove(cur_used + 1);
+                        }
+                    } else {
+                        self.used_mask_tiles.insert(
+                            cur_used,
+                            (
+                                path_used_mask_tiles[path_cur_used],
+                                path_used_mask_tiles[path_cur_used],
+                            ),
+                        );
+                        path_cur_used += 1;
+                    }
+                }
 
                 let tiles_across = path_tile_bounds.width() as usize;
-                for (draw_tile_index, draw_tile) in tiles.iter_mut().enumerate() {
+                for (draw_tile_index, draw_tile) in path_tiles.iter_mut().enumerate() {
                     let column = draw_tile_index % tiles_across;
                     let delta = draw_tile.backdrop as i32;
                     draw_tile.backdrop = backdrops[column] as f32;
@@ -1614,17 +1767,18 @@ impl<'a> Renderer<'a> {
                     backdrops[column] += delta;
                 }
 
-                if !fills.is_empty() {
-                    self.fills.append(&mut fills);
+                if !path_fills.is_empty() {
+                    self.fills.append(&mut path_fills);
                 }
-                for tile in &tiles {
-                    if tile.mask_tex_coord == AlphaTileId::INVALID && tile.backdrop == 0.0 {
+                for tile in &path_tiles {
+                    if tile.mask_tex_coord == MaskTileId::INVALID && tile.backdrop == 0.0 {
                         continue;
                     }
 
                     self.tiles.push(*tile);
                 }
-                tiles.resize(0, Tile::default());
+                path_tiles.resize(0, Tile::default());
+                path_used_mask_tiles.resize(0, 0);
             }
         }
 
@@ -1690,7 +1844,10 @@ impl<'a> Renderer<'a> {
             self.ctx
                 .begin_default_pass(PassAction::clear_color(0.0, 0.0, 0.0, 1.0));
         } else {
-            self.ctx.begin_pass(Some(self.mask_render_pass), PassAction::clear_color(0.0, 0.0, 0.0, 0.0));
+            self.ctx.begin_pass(
+                Some(self.mask_render_pass),
+                PassAction::clear_color(0.0, 0.0, 0.0, 0.0),
+            );
         }
         self.ctx.apply_pipeline(&self.fill_pipeline);
         self.ctx.apply_bindings(&self.fill_bindings);

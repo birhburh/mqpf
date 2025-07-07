@@ -57,12 +57,14 @@ async fn main() {
 
         path.move_to(vec2f(30.0, 30.0));
         path.line_to(vec2f(100.0, 100.0));
-        path.line_to(vec2f(100.0, 30.0));
-        // if elapsed_time < 5.0 {
-        //     path.line_to(vec2f(100.0 + elapsed_time as f32 * 10.0, 30.0));
-        // } else {
-        //     path.line_to(vec2f(150.0, 30.0));
-        // }
+        // path.line_to(vec2f(100.0, 30.0));
+        if elapsed_time < 10.0 {
+            path.line_to(vec2f(100.0 + elapsed_time as f32 * 30.0, 30.0));
+            // path.line_to(vec2f(150.0 - elapsed_time as f32 * 10.0, 30.0));
+        } else {
+            path.line_to(vec2f(400.0, 30.0));
+            // path.line_to(vec2f(100.0, 30.0));
+        }
 
         // path.move_to(vec2f(250.0, 30.0));
         // path.quadratic_curve_to(vec2f(330.0, 30.0), vec2f(330.0, 80.0));
@@ -116,8 +118,8 @@ async fn main() {
         renderer.render();
 
         dbg!(elapsed_time);
-        if elapsed_time > 0.25 {
-            // if elapsed_time > 5.0 {
+        // if elapsed_time > 0.25 {
+        if elapsed_time > 6.0 {
             // break;
         }
         next_frame().await;
