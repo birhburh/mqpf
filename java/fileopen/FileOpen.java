@@ -1,4 +1,4 @@
-package TARGET_PACKAGE_NAME;
+package fileopen;
 
 import android.net.Uri;
 import java.io.BufferedWriter;
@@ -7,6 +7,8 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import android.content.ContentResolver;
 
+import TARGET_PACKAGE_NAME.MainActivity;
+
 public class FileOpen {
   public static Uri saved_uri;
   public static MainActivity MainActivity;
@@ -14,9 +16,9 @@ public class FileOpen {
 
   public static native void init();
 
-  static native void finish();
+  public static native void finish();
 
-  static native void saveUri(byte[] data);
+  public static native void saveUri(byte[] data);
 
   public FileOpen() {}
 

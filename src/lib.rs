@@ -1,5 +1,6 @@
 // Most of the code for RAVG rendering stolen from https://github.com/servo/pathfinder
 
+pub mod fileopen;
 #[macro_use]
 extern crate bitflags;
 
