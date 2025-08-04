@@ -13,6 +13,7 @@ macroquad = { version = "=0.4.14" }
 bitflags = "1.0"
 pathfinder_geometry = "=0.5.1"
 pathfinder_simd = "=0.5.4"
+once_cell = "1"
 
 [build-dependencies]
 euclid = "0.20"
@@ -23,3 +24,5 @@ label = "MQPF EXAMPLE"
 min_sdk_version = 26
 target_sdk_version = 28
 build_targets = ["aarch64-linux-android"]
+[[package.metadata.android.permission]]
+name = "android.permission.ACCESS_FINE_LOCATION"

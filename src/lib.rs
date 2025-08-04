@@ -1680,7 +1680,8 @@ impl<'a> Renderer<'a> {
                                         self.used_mask_tiles[cur_used].1,
                                     ),
                                 );
-                                self.used_mask_tiles[cur_used].1 = path.used_mask_tiles[path_cur_used] - 1;
+                                self.used_mask_tiles[cur_used].1 =
+                                    path.used_mask_tiles[path_cur_used] - 1;
                                 cur_used += 1;
                                 path_cur_used += 1;
                             } else {
@@ -1705,9 +1706,7 @@ impl<'a> Renderer<'a> {
                 // TODO: Rewrite to be more effective
                 while path_cur_used < path_used_mask_tiles.len() {
                     if cur_used < self.used_mask_tiles.len() {
-                        if path_used_mask_tiles[path_cur_used]
-                            < self.used_mask_tiles[cur_used].0
-                        {
+                        if path_used_mask_tiles[path_cur_used] < self.used_mask_tiles[cur_used].0 {
                             self.used_mask_tiles.insert(
                                 cur_used,
                                 (
@@ -1742,8 +1741,7 @@ impl<'a> Renderer<'a> {
                             && self.used_mask_tiles[cur_used].1
                                 == self.used_mask_tiles[cur_used + 1].0 - 1
                         {
-                            self.used_mask_tiles[cur_used].1 =
-                                self.used_mask_tiles[cur_used + 1].1;
+                            self.used_mask_tiles[cur_used].1 = self.used_mask_tiles[cur_used + 1].1;
                             self.used_mask_tiles.remove(cur_used + 1);
                         }
                     } else {
@@ -1800,7 +1798,7 @@ impl<'a> Renderer<'a> {
             self.ctx.end_render_pass();
         }
 
-        self.draw_tiles();
+        // self.draw_tiles();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {
