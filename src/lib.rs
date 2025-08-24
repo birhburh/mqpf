@@ -4,6 +4,7 @@ pub mod fileopen;
 #[macro_use]
 extern crate bitflags;
 
+use fileopen::log_this;
 use {
     macroquad::{
         miniquad::{
@@ -57,6 +58,13 @@ const MASK_FRAMEBUFFER_HEIGHT: u32 = TILE_HEIGHT / 4 * MASK_TILES_DOWN;
 pub struct FillUniforms {
     pub framebuffer_size: [f32; 2],
     pub tile_size: [f32; 2],
+}
+
+#[repr(C)]
+pub struct MaskBackgroundUniforms {
+    pub mask_size: [f32; 2],
+    pub tile_size: [f32; 2],
+    pub framebuffer_size: [f32; 2],
 }
 
 #[repr(C)]
@@ -1416,27 +1424,34 @@ impl<'a> Renderer<'a> {
 
         let mask_render_pass = ctx.new_render_pass(mask_img, None);
 
-        let mask_background_shader = ctx
-            .new_shader(
-                match ctx.info().backend {
-                    Backend::OpenGl => ShaderSource::Glsl {
-                        vertex: include_str!("../shaders/mask_background.vs.glsl"),
-                        fragment: include_str!("../shaders/mask_background.fs.glsl"),
-                    },
-                    Backend::Metal => todo!(),
+        let mask_background_shader = ctx.new_shader(
+            match ctx.info().backend {
+                Backend::OpenGl => ShaderSource::Glsl {
+                    vertex: include_str!("../shaders/mask_background.vs.glsl"),
+                    fragment: include_str!("../shaders/mask_background.fs.glsl"),
                 },
-                ShaderMeta {
-                    images: vec!["uMaskTexture0".into()],
-                    uniforms: UniformBlockLayout {
-                        uniforms: vec![
-                            UniformDesc::new("uMaskTextureSize0", UniformType::Float2),
-                            UniformDesc::new("uTileSize", UniformType::Float2),
-                        ],
-                    },
+                Backend::Metal => todo!(),
+            },
+            ShaderMeta {
+                images: vec!["uMaskTexture0".into()],
+                uniforms: UniformBlockLayout {
+                    uniforms: vec![
+                        UniformDesc::new("uMaskTextureSize0", UniformType::Float2),
+                        UniformDesc::new("uTileSize", UniformType::Float2),
+                        UniformDesc::new("uFramebufferSize", UniformType::Float2),
+                    ],
                 },
-            )
-            .unwrap();
+            },
+        );
 
+        let mask_background_shader = match mask_background_shader {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                log_this(&format!("mask background shader error: \n{e}"));
+                Err(e)
+            }
+        }
+        .unwrap();
         let mask_background_bindings = Bindings {
             vertex_buffers: vec![quad_vertex_positions_buffer],
             index_buffer: quad_vertex_indices_buffer,
@@ -1791,15 +1806,19 @@ impl<'a> Renderer<'a> {
 
             let texture_size = self.ctx.texture_size(self.mask_img);
             self.ctx
-                .apply_uniforms(UniformsSource::table(&FillUniforms {
-                    framebuffer_size: [texture_size.0 as f32, texture_size.1 as f32],
+                .apply_uniforms(UniformsSource::table(&MaskBackgroundUniforms {
+                    mask_size: [texture_size.0 as f32, texture_size.1 as f32],
                     tile_size: [TILE_WIDTH as f32, TILE_HEIGHT as f32],
+                    framebuffer_size: [
+                        MASK_FRAMEBUFFER_WIDTH as f32,
+                        MASK_FRAMEBUFFER_HEIGHT as f32,
+                    ],
                 }));
             self.ctx.draw(0, 6, 1);
             self.ctx.end_render_pass();
         }
 
-        // self.draw_tiles();
+        self.draw_tiles();
     }
 
     fn upload_palette(&mut self, metadata: &Vec<Color>) {

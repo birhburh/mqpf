@@ -1,3 +1,10 @@
+use mqpf::fileopen::find_log_file;
+use mqpf::fileopen::finish_main_activity;
+use mqpf::fileopen::log_first;
+use mqpf::fileopen::log_this;
+use std::panic;
+use std::sync::Arc;
+use std::sync::Mutex;
 use {
     macroquad::{
         miniquad::{
@@ -10,13 +17,6 @@ use {
     mqpf::Renderer,
     pathfinder_geometry::{transform2d::Transform2F, vector::vec2f},
 };
-
-use mqpf::fileopen::find_log_file;
-use mqpf::fileopen::finish_main_activity;
-use mqpf::fileopen::log_first;
-use mqpf::fileopen::log_this;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 fn window_conf() -> Conf {
     let apple_gfx_api = AppleGfxApi::OpenGl;
@@ -38,6 +38,11 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
+    let default_panic = std::panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        log_this(&format!("panic occurred: {info}\n"));
+        default_panic(info);
+    }));
     let data = Arc::new(Mutex::new(None));
     let finish = Arc::new(Mutex::new(false));
 
@@ -83,22 +88,30 @@ async fn main() {
 
         let path = renderer.begin_path(hash!());
 
-        path.move_to(vec2f(30.0, 30.0));
-        path.line_to(vec2f(100.0, 100.0));
+        path.move_to(vec2f(0.0, 0.0));
+        path.line_to(vec2f(0.0, 16.0));
+        path.line_to(vec2f(16.0, 16.0));
+        path.line_to(vec2f(16.0, 0.0));
+        // path.line_to(vec2f(400.0, 30.0));
+        // path.quadratic_curve_to(vec2f(400.0, 30.0), vec2f(40.0, 40.0));
         // path.line_to(vec2f(100.0, 30.0));
-        if elapsed_time < 10.0 {
-            path.line_to(vec2f(100.0 + elapsed_time as f32 * 30.0, 30.0));
-            // path.line_to(vec2f(150.0 - elapsed_time as f32 * 10.0, 30.0));
-        } else {
-            path.line_to(vec2f(400.0, 30.0));
-            // path.line_to(vec2f(100.0, 30.0));
-        }
+        // if elapsed_time < 10.0 {
+        //     // path.quadratic_curve_to(
+        //     //     vec2f(270.0, 40.0),
+        //     //     vec2f(40.0, 40.0),
+        //     // );
+        //     path.line_to(vec2f(100.0 + elapsed_time as f32 * 30.0, 30.0));
+        // } else {
+        //     // path.quadratic_curve_to(vec2f(370.0, 40.0), vec2f(40.0, 40.0));
+        //     path.line_to(vec2f(400.0, 30.0));
+        // }
 
         // path.move_to(vec2f(250.0, 30.0));
         // path.quadratic_curve_to(vec2f(330.0, 30.0), vec2f(330.0, 80.0));
 
         let path_id = path.id;
         renderer.fill_path(
+            // path.line_to(vec2f(100.0, 30.0));
             &Transform2F::default(),
             // &Transform2F::from_translation(vec2f(30.0, 30.0)),
             // &Transform2F::from_translation(vec2f(0.0, elapsed_time as f32 * 20.0)),
@@ -106,42 +119,42 @@ async fn main() {
             &color_u8!(220, 220, 220, 255),
         );
 
-        let path = renderer.begin_path(hash!());
+        // let path = renderer.begin_path(hash!());
 
-        path.move_to(vec2f(300.0, 300.0));
-        path.line_to(vec2f(360.0, 360.0));
-        path.line_to(vec2f(370.0, 300.0));
+        // path.move_to(vec2f(300.0, 300.0));
+        // path.line_to(vec2f(360.0, 360.0));
+        // path.line_to(vec2f(370.0, 300.0));
 
-        let path_id = path.id;
-        renderer.fill_path(
-            &Transform2F::default(),
-            path_id,
-            &color_u8!(110, 110, 12, 255),
-        );
+        // let path_id = path.id;
+        // renderer.fill_path(
+        //     &Transform2F::default(),
+        //     path_id,
+        //     &color_u8!(110, 110, 12, 255),
+        // );
 
-        let path = renderer.begin_path(hash!());
+        // let path = renderer.begin_path(hash!());
 
-        path.move_to(vec2f(350.0, 30.0));
-        path.quadratic_curve_to(vec2f(430.0, 30.0), vec2f(430.0, 80.0));
+        // path.move_to(vec2f(350.0, 30.0));
+        // path.quadratic_curve_to(vec2f(430.0, 30.0), vec2f(430.0, 80.0));
 
-        let path_id = path.id;
-        renderer.fill_path(
-            &Transform2F::default(),
-            path_id,
-            &color_u8!(180, 255, 180, 255),
-        );
+        // let path_id = path.id;
+        // renderer.fill_path(
+        //     &Transform2F::default(),
+        //     path_id,
+        //     &color_u8!(180, 255, 180, 255),
+        // );
 
-        let path = renderer.begin_path(hash!());
+        // let path = renderer.begin_path(hash!());
 
-        path.move_to(vec2f(365.0, 30.0));
-        path.quadratic_curve_to(vec2f(445.0, 30.0), vec2f(445.0, 80.0));
+        // path.move_to(vec2f(365.0, 30.0));
+        // path.quadratic_curve_to(vec2f(445.0, 30.0), vec2f(445.0, 80.0));
 
-        let path_id = path.id;
-        renderer.fill_path(
-            &Transform2F::default(),
-            path_id,
-            &color_u8!(180, 128, 0, 128),
-        );
+        // let path_id = path.id;
+        // renderer.fill_path(
+        //     &Transform2F::default(),
+        //     path_id,
+        //     &color_u8!(180, 128, 0, 128),
+        // );
 
         renderer.render();
 
