@@ -13,16 +13,15 @@ void main() {
 	float sw = uMaskTextureSize0.x, scpw = sw / scw;
 
 	const float scrolly=0.0;
-	const float dcw = 160.0, dch = 160.0;
-	float dcpw = 16.0;
-	float dw = dcpw * dcw;
+	const float dcw = 150.0, dch = 150.0;
+	float dcpw = 10.0;
 	float dx = gl_FragCoord.x;
 	float dy = gl_FragCoord.y;
     if (floor(mod(dx, dcw)) == 0.0)
         gl_FragColor = vec4(0.1,0.5,0.2,1.0);
     else if (floor(mod(dy, dch)) == 0.0)
         gl_FragColor = vec4(0.1,0.5,0.2,1.0);
-    else if (dx <= dw) {
+    else {
 		float dcpx = dx/dcw;
 		float dcpy = dy/dch+scrolly;
 		float doffx=mod(dx,dcw);
@@ -35,6 +34,4 @@ void main() {
 		float sy=scpy*sch+soffy;
         gl_FragColor = vec4(texture2D(uMaskTexture0, vec2(sx, sy) / uMaskTextureSize0).xyz, 1.0);
     }
-    // gl_FragColor = vec4(texture2D(uMaskTexture0, gl_FragCoord.xy / uMaskTextureSize0 / vec2(4.0, 4.0)).xyz, 1.0);
-    // gl_FragColor = vec4(0.01, 0.5, 0.02, 1.0052);
 }

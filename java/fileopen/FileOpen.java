@@ -23,7 +23,7 @@ public class FileOpen {
   public FileOpen() {}
 
   public void finishMainActivity() {
-    MainActivity.finish();
+	System.exit(0);
   }
 
   public void OpenFileDialog() {

@@ -46,7 +46,7 @@ async fn main() {
     let data = Arc::new(Mutex::new(None));
     let finish = Arc::new(Mutex::new(false));
 
-    let exit = find_log_file(data.clone(), finish.clone());
+    let mut exit = find_log_file(data.clone(), finish.clone());
     // let mut text0 = "".to_string();
     log_first("I AM STARTING, MR KRABS!\n");
     log_this("I AM C...\n");
@@ -121,6 +121,21 @@ async fn main() {
 
         // let path = renderer.begin_path(hash!());
 
+        // path.move_to(vec2f(16.0, 0.0));
+        // path.line_to(vec2f(16.0, 16.0));
+        // path.line_to(vec2f(32.0, 16.0));
+        // path.line_to(vec2f(32.0, 0.0));
+
+        // let path_id = path.id;
+        // renderer.fill_path(
+        //     &Transform2F::default(),
+        //     path_id,
+        //     &color_u8!(20, 220, 20, 255),
+        // );
+
+
+        // let path = renderer.begin_path(hash!());
+
         // path.move_to(vec2f(300.0, 300.0));
         // path.line_to(vec2f(360.0, 360.0));
         // path.line_to(vec2f(370.0, 300.0));
@@ -159,9 +174,10 @@ async fn main() {
         renderer.render();
 
         dbg!(elapsed_time);
-        // if elapsed_time > 0.25 {
-        if elapsed_time > 6.0 {
+        if elapsed_time > 0.25 {
+        // if elapsed_time > 6.0 {
             // break;
+            exit = true;
         }
         next_frame().await;
     }
