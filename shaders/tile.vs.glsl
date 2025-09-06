@@ -1,20 +1,7 @@
 #version 100
 
-// pathfinder/shaders/tile.vs.glsl
-//
-// Copyright © 2020 The Pathfinder Project Developers.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 precision highp float;
-
-#ifdef GL_ES
 precision highp sampler2D;
-#endif
 
 uniform sampler2D uTextureMetadata;
 
@@ -38,14 +25,11 @@ vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord) {
 void main() {
     vec2 position = (aTileOrigin + aTileOffset) * uTileSize;
 
-    // depacking 3 ints from aMaskTexCoord
-    // aMaskTexCoord_z - page num in mask texture
-    int aMaskTexCoord_z = int(mod(aMaskTexCoord / 65536.0, 256.0));
+    // depacking 2 ints from aMaskTexCoord
     int aMaskTexCoord_y = int(mod(aMaskTexCoord / 256.0, 256.0));
     int aMaskTexCoord_x = int(mod(aMaskTexCoord, 256.0));
 
-    // 256 here - size of mask page
-    vec2 maskTileCoord = vec2(aMaskTexCoord_x, aMaskTexCoord_y + 256 * aMaskTexCoord_z);
+    vec2 maskTileCoord = vec2(aMaskTexCoord_x, aMaskTexCoord_y);
     vec2 maskTexCoord0 = (maskTileCoord + aTileOffset) * uTileSize;
 
     // aMaskTexCoord != INVALID

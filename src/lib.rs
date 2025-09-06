@@ -873,6 +873,7 @@ fn process_segment(
     tiles: &mut Vec<Tile>,
     path_tile_bounds: &RectI,
 ) {
+    log_this(&format!("process_segment\n"));
     if segment.is_quadratic() {
         let cubic = segment.to_cubic();
         return process_segment(
@@ -939,32 +940,43 @@ fn process_line_segment(
     tiles: &mut Vec<Tile>,
     path_tile_bounds: &RectI,
 ) {
+    log_this(&format!("process_line_segment\n"));
     let clip_box = RectF::from_points(
         vec2f(view_box.min_x(), f32::NEG_INFINITY),
         view_box.lower_right(),
     );
+    log_this(&format!("clip_box: {:?}\n", clip_box));
     let line_segment = match clip_line_segment_to_rect(line_segment, clip_box) {
         None => return,
         Some(line_segment) => line_segment,
     };
+    log_this(&format!("line_segment: {:?}\n", &line_segment));
 
     let tile_size = vec2f(TILE_WIDTH as f32, TILE_HEIGHT as f32);
     let tile_size_recip = Vector2F::splat(1.0) / tile_size;
+    log_this(&format!("line_segment: {:?}\n", &line_segment));
 
     let tile_line_segment = (line_segment.0 * tile_size_recip.0.concat_xy_xy(tile_size_recip.0))
         .floor()
         .to_i32x4();
+    log_this(&format!("tile_line_segment: {:?}\n", &tile_line_segment));
     let from_tile_coords = Vector2I(tile_line_segment.xy());
     let to_tile_coords = Vector2I(tile_line_segment.zw());
     let vector = line_segment.vector();
     let vector_is_negative = vector.0.packed_lt(F32x2::default());
+    log_this(&format!("vector_is_negative: {:?}\n", &vector_is_negative.to_i32x2()));
     let step = Vector2I((vector_is_negative | U32x2::splat(1)).to_i32x2());
+    log_this(&format!("step: {:?}\n", &step));
     let first_tile_crossing =
         (from_tile_coords + Vector2I((!vector_is_negative & U32x2::splat(1)).to_i32x2())).to_f32()
             * tile_size;
+    log_this(&format!("ADD: {:?}\n", &Vector2I((!vector_is_negative & U32x2::splat(1)).to_i32x2())));
+    log_this(&format!("first_tile_crossing: {:?}\n", &first_tile_crossing));
 
     let mut t_max = (first_tile_crossing - line_segment.from()) / vector;
+    log_this(&format!("t_max: {:?}\n", &t_max));
     let t_delta = (tile_size / vector).0.abs();
+    log_this(&format!("t_delta: {:?}\n", &t_delta));
 
     let mut current_position = line_segment.from();
     let mut tile_coords = from_tile_coords;
@@ -1853,10 +1865,11 @@ impl<'a> Renderer<'a> {
             BufferSource::slice(&self.fills),
         );
 
+        log_this("DRAW FILLS\n");
+        log_this(&format!("fills: {:?}\n", &self.fills));
         let fill_count = self.fills.len() as u32;
+        log_this(&format!("fill_count: {:?}\n", &fill_count));
         self.fills.clear();
-
-        println!("DRAW FILLS!");
 
         if self.mask_to_screen {
             self.ctx

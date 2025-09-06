@@ -89,9 +89,12 @@ async fn main() {
         let path = renderer.begin_path(hash!());
 
         path.move_to(vec2f(0.0, 0.0));
-        path.line_to(vec2f(0.0, 16.0));
-        path.line_to(vec2f(16.0, 16.0));
-        path.line_to(vec2f(16.0, 0.0));
+        path.line_to(vec2f(0.0, 12.0));
+        path.line_to(vec2f(16.0, 18.0));
+        path.line_to(vec2f(33.0, 0.0));
+
+        let need_exit = false;
+
         // path.line_to(vec2f(400.0, 30.0));
         // path.quadratic_curve_to(vec2f(400.0, 30.0), vec2f(40.0, 40.0));
         // path.line_to(vec2f(100.0, 30.0));
@@ -174,11 +177,13 @@ async fn main() {
         renderer.render();
 
         dbg!(elapsed_time);
-        if elapsed_time > 0.25 {
+        // if elapsed_time > 0.25 {
         // if elapsed_time > 6.0 {
             // break;
-            exit = true;
-        }
+            if need_exit {
+                exit = true;
+            }
+        // }
         next_frame().await;
     }
 }
