@@ -15,7 +15,7 @@ use {
         ui::hash,
     },
     mqpf::Renderer,
-    pathfinder_geometry::{transform2d::Transform2F, vector::vec2f},
+    pathfinder_geometry::vector::vec2f,
 };
 
 fn window_conf() -> Conf {
@@ -62,8 +62,7 @@ async fn main() {
 
     let start_time = get_time();
     loop {
-        clear_background(WHITE);
-        // clear_background(DARKGRAY);
+        clear_background(DARKGRAY);
         if exit {
             finish_main_activity();
         }
@@ -86,42 +85,6 @@ async fn main() {
 
         let elapsed_time = get_time() - start_time;
 
-        let path = renderer.begin_path(hash!());
-
-        path.move_to(vec2f(0.0, 0.0));
-        path.line_to(vec2f(0.0, 12.0));
-        path.line_to(vec2f(16.0, 18.0));
-        path.line_to(vec2f(33.0, 0.0));
-
-        let need_exit = false;
-
-        // path.line_to(vec2f(400.0, 30.0));
-        // path.quadratic_curve_to(vec2f(400.0, 30.0), vec2f(40.0, 40.0));
-        // path.line_to(vec2f(100.0, 30.0));
-        // if elapsed_time < 10.0 {
-        //     // path.quadratic_curve_to(
-        //     //     vec2f(270.0, 40.0),
-        //     //     vec2f(40.0, 40.0),
-        //     // );
-        //     path.line_to(vec2f(100.0 + elapsed_time as f32 * 30.0, 30.0));
-        // } else {
-        //     // path.quadratic_curve_to(vec2f(370.0, 40.0), vec2f(40.0, 40.0));
-        //     path.line_to(vec2f(400.0, 30.0));
-        // }
-
-        // path.move_to(vec2f(250.0, 30.0));
-        // path.quadratic_curve_to(vec2f(330.0, 30.0), vec2f(330.0, 80.0));
-
-        let path_id = path.id;
-        renderer.fill_path(
-            // path.line_to(vec2f(100.0, 30.0));
-            &Transform2F::default(),
-            // &Transform2F::from_translation(vec2f(30.0, 30.0)),
-            // &Transform2F::from_translation(vec2f(0.0, elapsed_time as f32 * 20.0)),
-            path_id,
-            &color_u8!(220, 220, 220, 255),
-        );
-
         // let path = renderer.begin_path(hash!());
 
         // path.move_to(vec2f(16.0, 0.0));
@@ -131,11 +94,9 @@ async fn main() {
 
         // let path_id = path.id;
         // renderer.fill_path(
-        //     &Transform2F::default(),
         //     path_id,
         //     &color_u8!(20, 220, 20, 255),
         // );
-
 
         // let path = renderer.begin_path(hash!());
 
@@ -145,7 +106,6 @@ async fn main() {
 
         // let path_id = path.id;
         // renderer.fill_path(
-        //     &Transform2F::default(),
         //     path_id,
         //     &color_u8!(110, 110, 12, 255),
         // );
@@ -157,7 +117,6 @@ async fn main() {
 
         // let path_id = path.id;
         // renderer.fill_path(
-        //     &Transform2F::default(),
         //     path_id,
         //     &color_u8!(180, 255, 180, 255),
         // );
@@ -169,20 +128,31 @@ async fn main() {
 
         // let path_id = path.id;
         // renderer.fill_path(
-        //     &Transform2F::default(),
         //     path_id,
         //     &color_u8!(180, 128, 0, 128),
         // );
+
+        let path = renderer.begin_path(hash!());
+
+        path.move_to(vec2f(160.0, 160.0));
+        path.line_to(vec2f(160.0, 172.0));
+        path.line_to(vec2f(176.0, 178.0));
+        path.line_to(vec2f(193.0, 160.0));
+
+        let need_exit = false;
+
+        let path_id = path.id;
+        renderer.fill_path(path_id, &color_u8!(220, 220, 220, 255));
 
         renderer.render();
 
         dbg!(elapsed_time);
         // if elapsed_time > 0.25 {
         // if elapsed_time > 6.0 {
-            // break;
-            if need_exit {
-                exit = true;
-            }
+        // break;
+        if need_exit {
+            exit = true;
+        }
         // }
         next_frame().await;
     }

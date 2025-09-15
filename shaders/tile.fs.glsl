@@ -40,5 +40,10 @@ void main() {
     // Premultiply alpha.
     color.rgb *= color.a;
 
-    gl_FragColor = color;
+	if (floor(mod(gl_FragCoord.x, 16.0)) == 0.0)
+		gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+	else if (floor(mod(gl_FragCoord.y, 16.0)) == 0.0)
+		gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+	else
+		gl_FragColor = color;
 }
