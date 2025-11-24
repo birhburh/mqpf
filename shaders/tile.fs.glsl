@@ -3,8 +3,12 @@
 precision highp float;
 precision highp sampler2D;
 
+uniform mat4 uTransform;
+uniform vec2 uTileSize;
+uniform float uTileZoom;
 uniform sampler2D uMaskTexture0;
 uniform vec2 uMaskTextureSize0;
+uniform vec2 uFramebufferSize;
 
 varying vec3 vMaskTexCoord0;
 varying vec4 vBaseColor;
@@ -39,11 +43,18 @@ void main() {
 
     // Premultiply alpha.
     color.rgb *= color.a;
+	
+	float dx = gl_FragCoord.x;
+	float dy = gl_FragCoord.y;
 
-	if (floor(mod(gl_FragCoord.x, 16.0)) == 0.0)
-		gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
-	else if (floor(mod(gl_FragCoord.y, 16.0)) == 0.0)
-		gl_FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+	// because tiles drawn from the top left corner
+	dy = (1.0 - (gl_FragCoord.y / uFramebufferSize.y)) * (uFramebufferSize.y);
+
+		if (floor(mod(dx, uTileSize.x*uTileZoom)) == 0.0)
+		gl_FragColor = vec4(1.0, 0.5, 0.5, 1.0);
+	else if (floor(mod(dy, uTileSize.x*uTileZoom)) == 0.0)
+		gl_FragColor = vec4(1.0, 0.5, 0.5, 1.0);
 	else
+		// gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
 		gl_FragColor = color;
 }

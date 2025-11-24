@@ -144,6 +144,18 @@ async fn main() {
         let path_id = path.id;
         renderer.fill_path(path_id, &color_u8!(220, 220, 220, 255));
 
+        let path = renderer.begin_path(hash!());
+
+        path.move_to(vec2f(160.0, 250.0));
+        path.quadratic_curve_to(vec2f(167.0, 260.0), vec2f(160.0, 262.0));
+        // path.line_to(vec2f(160.0, 262.0));
+        path.line_to(vec2f(176.0, 268.0));
+        path.quadratic_curve_to(vec2f(193.0, 260.0), vec2f(193.0, 250.0));
+        // path.line_to(vec2f(193.0, 250.0));
+
+        let path_id = path.id;
+        renderer.fill_path(path_id, &color_u8!(220, 220, 220, 255));
+
         renderer.render();
 
         dbg!(elapsed_time);

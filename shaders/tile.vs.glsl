@@ -7,6 +7,7 @@ uniform sampler2D uTextureMetadata;
 
 uniform mat4 uTransform;
 uniform vec2 uTileSize;
+uniform float uTileZoom;
 uniform ivec2 uTextureMetadataSize;
 
 attribute vec2 aTileOffset;
@@ -18,12 +19,8 @@ attribute float aCtrlBackdrop;
 varying vec3 vMaskTexCoord0;
 varying vec4 vBaseColor;
 
-vec4 fetchUnscaled(sampler2D srcTexture, vec2 scale, vec2 originCoord) {
-    return texture2D(srcTexture, (originCoord + vec2(0.5)) * scale);
-}
-
 void main() {
-    vec2 position = (aTileOrigin + aTileOffset) * uTileSize;
+    vec2 position = (aTileOrigin + aTileOffset) * uTileSize.x * uTileZoom - uTileSize.x * uTileZoom * 10.0;
 
     // depacking 2 ints from aMaskTexCoord
     int aMaskTexCoord_y = int(mod(aMaskTexCoord / 256.0, 256.0));
@@ -40,8 +37,7 @@ void main() {
 
     vec2 metadataScale = vec2(1.0) / vec2(uTextureMetadataSize);
     vec2 metadataEntryCoord = vec2(mod(aColor, 128.0), aColor / 128.0);
-    vec4 baseColor       = fetchUnscaled(uTextureMetadata, metadataScale, metadataEntryCoord);
-    vBaseColor = baseColor;
+    vBaseColor = texture2D(uTextureMetadata, (metadataEntryCoord + vec2(0.5)) * metadataScale);
 
     vMaskTexCoord0 = vec3(maskTexCoord0, aCtrlBackdrop);
     gl_Position = uTransform * vec4(position, 0.0, 1.0);

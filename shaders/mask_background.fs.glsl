@@ -5,6 +5,7 @@ precision highp float;
 uniform sampler2D uMaskTexture0;
 uniform vec2 uMaskTextureSize0;
 uniform vec2 uTileSize;
+uniform float uTileZoom;
 uniform vec2 uFramebufferSize;
 
 void main() {
@@ -16,13 +17,14 @@ void main() {
 	// const float scrolly=19.0;
 	const float scrolly=0.0;
 	// const float dcw = 400.0, dch = 100.0;
-	const float zoom = 6.0;
+	const float zoom = 8.0;
 	const float dcw = scw * zoom, dch = sch*zoom*scomp;
 	// dcpw - dest cell pos w - width of dest in cells
 	float dcpw = 5.0;
 	float dx = gl_FragCoord.x;
 	float dy = gl_FragCoord.y;
-    if (dx <= dcpw*dcw+1.0) {
+
+	if (dx <= dcpw*dcw+1.0) {
 		if (floor(mod(dx, dcw)) == 0.0)
 			gl_FragColor = vec4(0.1,0.5,0.2,1.0);
 		else if (floor(mod(dy, dch)) == 0.0)
@@ -59,5 +61,9 @@ void main() {
 			coverage = abs(coverage);
 			gl_FragColor = vec4(coverage, coverage, coverage, 1.0);
 		}
-	}
+	}	
+
+	float newdy = (1.0 - (gl_FragCoord.y / uFramebufferSize.y)) * (uFramebufferSize.y);
+	if (floor(mod(dx, uTileSize.x*uTileZoom)) == 0.0 || floor(mod(newdy, uTileSize.x*uTileZoom)) == 0.0)
+		gl_FragColor += vec4(0.15,0.15,0.35,0.0);
 }
